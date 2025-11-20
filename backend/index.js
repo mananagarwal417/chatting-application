@@ -14,7 +14,11 @@ const port = process.env.PORT || 8000;
 
 connectToDatabase(process.env.MONGODB_URL);
 
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  credentials: true,
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -95,6 +99,8 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(port,"0.0.0.0");
+server.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
 
 module.exports = app;
