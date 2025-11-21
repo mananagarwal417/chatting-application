@@ -470,6 +470,7 @@
 
 
 import { Fragment, useState, useEffect } from "react";
+import { useRef } from "react";
 import { Disclosure, Menu, Transition } from "@headlessui/react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { getToken, removeToken } from "../utils/auth";
@@ -481,12 +482,25 @@ function classNames(...classes) {
 }
 
 export default function Navbar() {
+  const menuRef = useRef(null);
+  const buttonRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
   const token = getToken();
   const [theme, setTheme] = useState("light");
 
   const isActive = (path) => location.pathname === path;
+
+  useEffect(() => {
+    function handleOutside(e) {
+      if (!menuRef.current || !buttonRef.current) return;
+      if (!menuRef.current.contains(e.target) && !buttonRef.current.contains(e.target)) {
+        if (!buttonRef.current.classList.contains('hidden')) buttonRef.current.click();
+      }
+    }
+    document.addEventListener('click', handleOutside);
+    return () => document.removeEventListener('click', handleOutside);
+  }, []);
 
   useEffect(() => {
     const t = localStorage.getItem("theme") || "light";
@@ -621,7 +635,7 @@ export default function Navbar() {
                 )}
 
                 {!token && (
-                  <Disclosure.Button className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800">
+                  <Disclosure.Button ref={buttonRef} className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800">
                     <span className="material-symbols-rounded text-[28px]">
                       {open ? "close" : "menu"}
                     </span>
@@ -641,7 +655,7 @@ export default function Navbar() {
             </div>
           </div>
 
-          <Disclosure.Panel className="md:hidden bg-gray-200 dark:bg-gray-800">
+          <Disclosure.Panel ref={menuRef} className="md:hidden bg-gray-200 dark:bg-gray-800">
             <div className="space-y-1 px-4 pt-2 pb-3">
               {!token && (
                 <>
@@ -697,3 +711,5 @@ export default function Navbar() {
     </Disclosure>
   );
 }
+
+
