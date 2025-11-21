@@ -558,14 +558,14 @@ export default function Navbar(){
                       Home
                     </Link>
 
-                    <Disclosure.Button as={Link}$1>
+                    <Disclosure.Button as={Link} to="/contact">
                       Contact Us
                     </Disclosure.Button>
-                    <Disclosure.Button as={Link}$1>
+                    <Disclosure.Button as={Link} to="/login">
                       Login
                     </Disclosure.Button>
 
-                    <Disclosure.Button as={Link}$1>
+                    <Disclosure.Button as={Link} to="/register">
                       Register
                     </Disclosure.Button>
                   </>
