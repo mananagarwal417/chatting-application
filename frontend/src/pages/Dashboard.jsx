@@ -15,6 +15,9 @@ const api = axios.create({
   baseURL: API_URL,
 });
 
+let globalSocket = null;
+
+
 const UserContext = React.createContext();
 const useUser = () => useContext(UserContext);
 
@@ -209,50 +212,61 @@ function Dashboard() {
 
 
   useEffect(() => {
-    if (!user) return;
+  if (!user) return;
 
-    socket.current = io(SOCKET_URL, { query: { userId: user._id } });
-
-   const handleIncomingMessage = async (msg) => {
-  let finalContent = msg.content;
-
-  try {
-    const parsed = JSON.parse(msg.content);
-
-    if (parsed.iv && parsed.data) {
-      // ⭐ FIX: Use the ref to get the latest conversations
-      const convo = conversationsRef.current.find((c) => c._id === msg.conversation);
-      const aes = await getAesKey(convo);
-
-      if (aes) {
-        finalContent = await decrypt(aes, parsed);
-      }
-    }
-  } catch {
-    // message was plaintext already
+  // Use the single global socket
+  if (!globalSocket) {
+    globalSocket = io(SOCKET_URL, { query: { userId: user._id } });
   }
 
-  const finalMsg = { ...msg, content: finalContent };
+  socket.current = globalSocket;
 
-  setMessages((prev) => {
-    // ⭐ FIX: Use the ref to check the latest selected convo
-    if (selectedConvoRef.current?._id === finalMsg.conversation) {
-      return [...prev, finalMsg];
-    }
-    return prev;
-  });
+  const handleIncomingMessage = async (msg) => {
+    let finalContent = msg.content;
 
-  updateConvoList(finalMsg);
-};
+    try {
+      if (typeof msg.content === "string" && msg.content.startsWith("{")) {
+        const parsed = JSON.parse(msg.content);
+
+        if (parsed.iv && parsed.data) {
+          const convo = conversationsRef.current.find(
+            (c) => c._id === msg.conversation
+          );
+          const aes = await getAesKey(convo);
+
+          if (aes) {
+            finalContent = await decrypt(aes, parsed);
+          }
+        }
+      }
+    } catch (e) {}
 
 
-    socket.current.on("receiveMessage", handleIncomingMessage);
+    // If this message is sent by me, ignore socket echo
+if (msg.sender._id === user._id) {
+  return;
+}
 
-    return () => {
-      socket.current.off("receiveMessage", handleIncomingMessage);
-      socket.current.disconnect();
-    };
-  }, [user]);
+
+    const finalMsg = { ...msg, content: finalContent };
+
+    setMessages((prev) => {
+      if (selectedConvoRef.current?._id === finalMsg.conversation) {
+        return [...prev, finalMsg];
+      }
+      return prev;
+    });
+
+    updateConvoList(finalMsg);
+  };
+
+  socket.current.on("receiveMessage", handleIncomingMessage);
+
+  return () => {
+    socket.current.off("receiveMessage", handleIncomingMessage);
+  };
+}, [user]);
+
 
 
   // ─────────────────────── LOAD CONVERSATIONS ───────────────────────
@@ -265,13 +279,13 @@ function Dashboard() {
       .catch(() => {});
   }, [user]);
 
-  useEffect(() => {
-  if (!selectedConvo) return;
+//   useEffect(() => {
+//   if (!selectedConvo) return;
 
-  // Rejoin room when component reloads
-  socket.current?.emit("joinRoom", selectedConvo._id);
+//   // Rejoin room when component reloads
+//   socket.current?.emit("joinRoom", selectedConvo._id);
 
-}, [selectedConvo]);
+// }, [selectedConvo]);
 
 
 
