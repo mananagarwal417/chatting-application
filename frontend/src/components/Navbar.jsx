@@ -481,7 +481,7 @@ function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-export default function Navbar() {
+export default function Navbar(){
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
   const navigate = useNavigate();
@@ -531,9 +531,9 @@ export default function Navbar() {
             <div className="flex h-16 justify-between items-center">
               <div className="flex items-center space-x-3">
                 <img src={logo} alt="logo" className="h-8 w-8 rounded-full" />
-                <Link to="/" className="text-xl font-bold text-indigo-400">
+                <Disclosure.Button as={Link}$1>
                   Connect
-                </Link>
+                </Disclosure.Button>
               </div>
 
               <div className="hidden md:flex items-center space-x-6 text-sm font-bold">
@@ -550,37 +550,16 @@ export default function Navbar() {
                       Home
                     </Link>
 
-                    <Link
-                      to="/contact"
-                      className={`px-3 py-2 rounded-md transition ${
-                        isActive("/contact")
-                          ? "text-indigo-400"
-                          : "text-gray-700 dark:text-gray-300 hover:text-indigo-400"
-                      }`}
-                    >
+                    <Disclosure.Button as={Link}$1>
                       Contact Us
-                    </Link>
-                    <Link
-                      to="/login"
-                      className={`px-3 py-2 rounded transition ${
-                        isActive("/login")
-                          ? "bg-indigo-700 text-white"
-                          : "bg-indigo-600 hover:bg-indigo-700 text-white"
-                      }`}
-                    >
+                    </Disclosure.Button>
+                    <Disclosure.Button as={Link}$1>
                       Login
-                    </Link>
+                    </Disclosure.Button>
 
-                    <Link
-                      to="/register"
-                      className={`px-3 py-2 rounded transition ${
-                        isActive("/register")
-                          ? "bg-gray-600 text-white"
-                          : "bg-gray-700 hover:bg-gray-600 text-white"
-                      }`}
-                    >
+                    <Disclosure.Button as={Link}$1>
                       Register
-                    </Link>
+                    </Disclosure.Button>
                   </>
                 )}
               </div>
@@ -711,5 +690,6 @@ export default function Navbar() {
     </Disclosure>
   );
 }
+
 
 
