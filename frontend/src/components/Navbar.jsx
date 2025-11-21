@@ -481,7 +481,7 @@ function classNames(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-export default function Navbar(){
+export default function Navbar() {
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
   const navigate = useNavigate();
@@ -519,14 +519,6 @@ export default function Navbar(){
     removeToken();
     navigate("/login");
   };
-  
-  useEffect(() => {
-  const btn = document.querySelector("#mobile-menu-btn");
-  if (btn && !btn.classList.contains("hidden")) {
-    btn.click(); // closes the open menu smoothly
-  }
-}, [location.pathname]);
-
 
   return (
     <Disclosure
@@ -539,9 +531,9 @@ export default function Navbar(){
             <div className="flex h-16 justify-between items-center">
               <div className="flex items-center space-x-3">
                 <img src={logo} alt="logo" className="h-8 w-8 rounded-full" />
-                <Disclosure.Button as={Link}$1>
+                <Link to="/" className="text-xl font-bold text-indigo-400">
                   Connect
-                </Disclosure.Button>
+                </Link>
               </div>
 
               <div className="hidden md:flex items-center space-x-6 text-sm font-bold">
@@ -558,16 +550,37 @@ export default function Navbar(){
                       Home
                     </Link>
 
-                    <Disclosure.Button as={Link} to="/contact">
+                    <Link
+                      to="/contact"
+                      className={`px-3 py-2 rounded-md transition ${
+                        isActive("/contact")
+                          ? "text-indigo-400"
+                          : "text-gray-700 dark:text-gray-300 hover:text-indigo-400"
+                      }`}
+                    >
                       Contact Us
-                    </Disclosure.Button>
-                    <Disclosure.Button as={Link} to="/login">
+                    </Link>
+                    <Link
+                      to="/login"
+                      className={`px-3 py-2 rounded transition ${
+                        isActive("/login")
+                          ? "bg-indigo-700 text-white"
+                          : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                      }`}
+                    >
                       Login
-                    </Disclosure.Button>
+                    </Link>
 
-                    <Disclosure.Button as={Link} to="/register">
+                    <Link
+                      to="/register"
+                      className={`px-3 py-2 rounded transition ${
+                        isActive("/register")
+                          ? "bg-gray-600 text-white"
+                          : "bg-gray-700 hover:bg-gray-600 text-white"
+                      }`}
+                    >
                       Register
-                    </Disclosure.Button>
+                    </Link>
                   </>
                 )}
               </div>
@@ -622,7 +635,7 @@ export default function Navbar(){
                 )}
 
                 {!token && (
-                  <Disclosure.Button ref={buttonRef} id="mobile-menu-btn" className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800">
+                  <Disclosure.Button ref={buttonRef} className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800">
                     <span className="material-symbols-rounded text-[28px]">
                       {open ? "close" : "menu"}
                     </span>
@@ -698,6 +711,5 @@ export default function Navbar(){
     </Disclosure>
   );
 }
-
 
 
