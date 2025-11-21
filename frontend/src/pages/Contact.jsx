@@ -16,7 +16,7 @@ function Contact() {
     const newMessage = { firstname, lastname, email, subject, message };
 
     try {
-      await axios.post('http://localhost:8000/api/users/contact', newMessage);
+      await axios.post(`${API_URL}/api/users/contact`, newMessage);
 
       // clear fields
       setFirstname('');
