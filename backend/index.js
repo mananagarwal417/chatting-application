@@ -64,28 +64,64 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendMessage', async (messageData) => {
-    try {
-      const senderId = messageData.sender;
+  try {
+    // --- Normalize content so it is ALWAYS a clean JSON string if encrypted ---
+    const normalizeContent = (input) => {
+      if (typeof input === 'object' && input !== null) {
+        // If object → stringify once
+        return JSON.stringify(input);
+      }
 
-      const newMessage = new Message({
-        conversation: messageData.conversationId,
-        sender: senderId,
-        content: messageData.content,
-      });
-      const savedMessage = await newMessage.save();
+      if (typeof input === 'string') {
+        let s = input.trim();
 
-      await Conversation.findByIdAndUpdate(messageData.conversationId, {
-        lastMessage: savedMessage.content,
-        lastMessageAt: savedMessage.createdAt,
-      });
+        // If string is double-quoted → unescape once
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          try {
+            s = JSON.parse(s);
+          } catch {
+            // ignore
+          }
+        }
 
-      const populatedMessage = await savedMessage.populate('sender', '_id username avatarUrl');
+        if (typeof s === 'object' && s !== null) {
+          return JSON.stringify(s);
+        }
 
-      io.to(messageData.conversationId).emit('receiveMessage', populatedMessage);
-    } catch (error) {
-      console.error('Error handling message:', error);
-    }
-  });
+        return String(s);
+      }
+
+      return String(input);
+    };
+
+    const cleanContent = normalizeContent(messageData.content);
+
+    // --- Save message in DB ---
+    const newMessage = new Message({
+      conversation: messageData.conversationId,
+      sender: messageData.sender,
+      content: cleanContent,
+      type: messageData.type || 'text',
+    });
+
+    const savedMessage = await newMessage.save();
+
+    await Conversation.findByIdAndUpdate(messageData.conversationId, {
+      lastMessage: savedMessage.content,
+      lastMessageAt: savedMessage.createdAt,
+    });
+
+    // --- Populate sender ---
+    const populatedMessage = await savedMessage.populate('sender', '_id username avatarUrl');
+
+    // --- Emit to room ---
+    io.to(messageData.conversationId).emit('receiveMessage', populatedMessage);
+
+  } catch (error) {
+    console.error("Error handling message:", error);
+  }
+});
+
 
   socket.on('notifyNewConversation', (newConvo) => {
     const targetParticipant = newConvo.participants.find(p => p.user._id !== newConvo.creatorId);
