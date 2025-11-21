@@ -4,6 +4,9 @@ import axios from 'axios';
 import { setToken } from '../utils/auth';
 import { motion } from "framer-motion";   // ⭐ ADDED
 
+const API_URL = import.meta.env.VITE_API_URL;
+
+
 function Login() {
   const navigate = useNavigate();
 
@@ -14,7 +17,7 @@ function Login() {
     e.preventDefault();
 
     try {
-      const res = await axios.post("http://localhost:8000/api/auth/login", {
+      const res = await axios.post(`${API_URL}/api/auth/login`, {
         email,
         password,
       });
