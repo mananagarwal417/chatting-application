@@ -11,6 +11,9 @@ function Contact() {
 
   const [submitted, setSubmitted] = useState(false); // ⭐ New state
 
+const API_URL = import.meta.env.VITE_API_URL;
+
+
   const handlesubmit = async (e) => {
     e.preventDefault();
     const newMessage = { firstname, lastname, email, subject, message };
