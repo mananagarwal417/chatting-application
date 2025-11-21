@@ -292,30 +292,47 @@ if (msg.sender._id === user._id) {
 
   // ─────────────────────── LOAD MESSAGES ───────────────────────
 
-  useEffect(() => {
-    if (!selectedConvo) return;
+ useEffect(() => {
+  if (!selectedConvo) return;
 
-    socket.current.emit("joinRoom", selectedConvo._id);
+  socket.current.emit("joinRoom", selectedConvo._id);
 
-    api.get(`/messages/${selectedConvo._id}`)
-      .then(async (res) => {
-        const list = await Promise.all(
-          res.data.map(async (m) => {
-            try {
-              const p = JSON.parse(m.content);
-              if (p.iv && p.data) {
+  api.get(`/messages/${selectedConvo._id}`)
+    .then(async (res) => {
+      const list = await Promise.all(
+        res.data.map(async (m) => {
+          let content = m.content;
+
+          try {
+            // Trim to avoid newline/spaces
+            const trimmed = (typeof content === "string" ? content.trim() : content);
+
+            // Only parse JSON-like data
+            if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+              const parsed = JSON.parse(trimmed);
+
+              // Check if it's encrypted structure
+              if (parsed.iv && parsed.data) {
                 const aes = await getAesKey(selectedConvo);
-                const dec = await decrypt(aes, p);
-                return { ...m, content: dec };
+
+                if (aes) {
+                  content = await decrypt(aes, parsed);
+                }
               }
-            } catch {}
-            return m;
-          })
-        );
-        setMessages(list);
-      })
-      .catch(() => {});
-  }, [selectedConvo]);
+            }
+          } catch (e) {
+            // Ignore parse errors, keep raw content
+          }
+
+          return { ...m, content };
+        })
+      );
+
+      setMessages(list);
+    })
+    .catch(() => {});
+}, [selectedConvo]);
+
 
   // ─────────────────────── UPDATE CHAT LIST ───────────────────────
 
