@@ -295,6 +295,10 @@ if (msg.sender._id === user._id) {
  useEffect(() => {
   if (!selectedConvo) return;
 
+  setMessages([]);   // Clear old chat instantly when switching users
+
+  // Rejoin room when component reloads
+
   socket.current.emit("joinRoom", selectedConvo._id);
 
   api.get(`/messages/${selectedConvo._id}`)
