@@ -519,6 +519,14 @@ export default function Navbar(){
     removeToken();
     navigate("/login");
   };
+  
+  useEffect(() => {
+  const btn = document.querySelector("#mobile-menu-btn");
+  if (btn && !btn.classList.contains("hidden")) {
+    btn.click(); // closes the open menu smoothly
+  }
+}, [location.pathname]);
+
 
   return (
     <Disclosure
@@ -614,7 +622,7 @@ export default function Navbar(){
                 )}
 
                 {!token && (
-                  <Disclosure.Button ref={buttonRef} className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800">
+                  <Disclosure.Button ref={buttonRef} id="mobile-menu-btn" className="md:hidden p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800">
                     <span className="material-symbols-rounded text-[28px]">
                       {open ? "close" : "menu"}
                     </span>
