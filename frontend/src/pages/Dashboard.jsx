@@ -8,8 +8,9 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import EmojiPicker from "emoji-picker-react";
 
-const API_URL = "http://localhost:8000/api";
-const SOCKET_URL = "http://localhost:8000";
+const API_URL = import.meta.env.VITE_AXIOS_URL;
+const SOCKET_URL = import.meta.env.VITE_API_URL;
+
 
 const api = axios.create({
   baseURL: API_URL,
