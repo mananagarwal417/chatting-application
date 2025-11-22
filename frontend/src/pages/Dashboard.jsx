@@ -223,43 +223,46 @@ function Dashboard() {
   socket.current = globalSocket;
 
   const handleIncomingMessage = async (msg) => {
-    let finalContent = msg.content;
+  let finalContent = msg.content;
 
-    try {
-      if (typeof msg.content === "string" && msg.content.startsWith("{")) {
-        const parsed = JSON.parse(msg.content);
+  try {
+    let parsed = msg.content;
 
-        if (parsed.iv && parsed.data) {
-          const convo = conversationsRef.current.find(
-            (c) => c._id === msg.conversation
-          );
-          const aes = await getAesKey(convo);
+    // If content is a string → try turning into object
+    if (typeof parsed === "string") {
+      parsed = JSON.parse(parsed);
+    }
 
-          if (aes) {
-            finalContent = await decrypt(aes, parsed);
-          }
-        }
+    // If it's encrypted → decrypt it
+    if (parsed && parsed.iv && parsed.data) {
+      const convo = conversationsRef.current.find(
+        (c) => c._id === msg.conversation
+      );
+      const aes = await getAesKey(convo);
+
+      if (aes) {
+        finalContent = await decrypt(aes, parsed);
       }
-    } catch (e) {}
+    }
+  } catch (e) {}
 
+  // Ignore echo of my own sent message
+  if (msg.sender._id === user._id) {
+    return;
+  }
 
-    // If this message is sent by me, ignore socket echo
-if (msg.sender._id === user._id) {
-  return;
-}
+  const finalMsg = { ...msg, content: finalContent };
 
+  setMessages((prev) => {
+    if (selectedConvoRef.current?._id === finalMsg.conversation) {
+      return [...prev, finalMsg];
+    }
+    return prev;
+  });
 
-    const finalMsg = { ...msg, content: finalContent };
+  updateConvoList(finalMsg);
+};
 
-    setMessages((prev) => {
-      if (selectedConvoRef.current?._id === finalMsg.conversation) {
-        return [...prev, finalMsg];
-      }
-      return prev;
-    });
-
-    updateConvoList(finalMsg);
-  };
 
   socket.current.on("receiveMessage", handleIncomingMessage);
 
