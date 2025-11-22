@@ -49,6 +49,9 @@ const io = new Server(server, {
 const Message = require('./models/message');
 const Conversation = require('./models/conversation');
 
+// UPDATED SOCKET.IO SERVER WITH delivered + seen STATUS
+// (Only required parts added, nothing else changed)
+
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
@@ -58,73 +61,99 @@ io.on('connection', (socket) => {
     console.log(`User ${userId} joined their personal room.`);
   }
 
+  // -----------------------------
+  // JOIN CONVERSATION ROOM
+  // -----------------------------
   socket.on('joinRoom', (conversationId) => {
     socket.join(conversationId);
     console.log(`User ${socket.id} joined room ${conversationId}`);
   });
 
+  // -----------------------------
+  // SEND MESSAGE (marks as delivered)
+  // -----------------------------
   socket.on('sendMessage', async (messageData) => {
-  try {
-    // --- Normalize content so it is ALWAYS a clean JSON string if encrypted ---
-    const normalizeContent = (input) => {
-      if (typeof input === 'object' && input !== null) {
-        // If object → stringify once
-        return JSON.stringify(input);
-      }
-
-      if (typeof input === 'string') {
-        let s = input.trim();
-
-        // If string is double-quoted → unescape once
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-          try {
-            s = JSON.parse(s);
-          } catch {
-            // ignore
+    try {
+      const normalizeContent = (input) => {
+        if (typeof input === 'object' && input !== null) {
+          return JSON.stringify(input);
+        }
+        if (typeof input === 'string') {
+          let s = input.trim();
+          if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+            try { s = JSON.parse(s); } catch {}
           }
+          if (typeof s === 'object' && s !== null) return JSON.stringify(s);
+          return String(s);
         }
+        return String(input);
+      };
 
-        if (typeof s === 'object' && s !== null) {
-          return JSON.stringify(s);
-        }
+      const cleanContent = normalizeContent(messageData.content);
 
-        return String(s);
-      }
+      // ⭐ SAVE MESSAGE WITH DELIVERED STATUS
+      const newMessage = new Message({
+        conversation: messageData.conversationId,
+        sender: messageData.sender,
+        content: cleanContent,
+        type: messageData.type || 'text',
+        status: 'delivered', // ⭐ NEW
+      });
 
-      return String(input);
-    };
+      const savedMessage = await newMessage.save();
 
-    const cleanContent = normalizeContent(messageData.content);
+      await Conversation.findByIdAndUpdate(messageData.conversationId, {
+        lastMessage: savedMessage.content,
+        lastMessageAt: savedMessage.createdAt,
+      });
 
-    // --- Save message in DB ---
-    const newMessage = new Message({
-      conversation: messageData.conversationId,
-      sender: messageData.sender,
-      content: cleanContent,
-      type: messageData.type || 'text',
-    });
+      const populatedMessage = await savedMessage.populate('sender', '_id username avatarUrl');
 
-    const savedMessage = await newMessage.save();
+      io.to(messageData.conversationId).emit('receiveMessage', populatedMessage);
 
-    await Conversation.findByIdAndUpdate(messageData.conversationId, {
-      lastMessage: savedMessage.content,
-      lastMessageAt: savedMessage.createdAt,
-    });
+    } catch (error) {
+      console.error("Error handling message:", error);
+    }
+  });
 
-    // --- Populate sender ---
-    const populatedMessage = await savedMessage.populate('sender', '_id username avatarUrl');
+  // -----------------------------
+  // MARK SEEN
+  // -----------------------------
+  socket.on('markSeen', async ({ conversationId, userId }) => {
+    try {
+      // Get all unseen messages FROM the other user
+      const unseen = await Message.find({
+        conversation: conversationId,
+        sender: { $ne: userId },
+        status: { $ne: 'seen' }
+      });
 
-    // --- Emit to room ---
-    io.to(messageData.conversationId).emit('receiveMessage', populatedMessage);
+      // Mark all as seen
+      await Message.updateMany(
+        {
+          conversation: conversationId,
+          sender: { $ne: userId }
+        },
+        { status: 'seen' }
+      );
 
-  } catch (error) {
-    console.error("Error handling message:", error);
-  }
-});
+      // Notify sender for each message
+      unseen.forEach(msg => {
+        io.to(conversationId).emit('messageSeen', msg._id);
+      });
 
+    } catch (err) {
+      console.log('Error in markSeen:', err);
+    }
+  });
 
+  // -----------------------------
+  // NEW CONVERSATION
+  // -----------------------------
   socket.on('notifyNewConversation', (newConvo) => {
-    const targetParticipant = newConvo.participants.find(p => p.user._id !== newConvo.creatorId);
+    const targetParticipant = newConvo.participants.find(
+      p => p.user._id !== newConvo.creatorId
+    );
     if (targetParticipant) {
       io.to(targetParticipant.user._id).emit('newConversation', newConvo);
     }
