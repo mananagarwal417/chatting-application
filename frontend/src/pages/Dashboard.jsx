@@ -259,6 +259,18 @@ function Dashboard() {
     // ⭐ Mark as delivered
     finalMsg.status = "delivered";
 
+    // ⭐ If user is actively viewing this conversation → mark seen immediately
+if (
+  selectedConvoRef.current &&
+  selectedConvoRef.current._id === msg.conversation
+) {
+  socket.current.emit("markSeen", {
+    conversationId: msg.conversation,
+    userId: user._id
+  });
+}
+
+
     setMessages((prev) => {
       if (
         selectedConvoRef.current?._id === finalMsg.conversation ||
