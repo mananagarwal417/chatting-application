@@ -254,11 +254,15 @@ function Dashboard() {
   const finalMsg = { ...msg, content: finalContent };
 
   setMessages((prev) => {
-    if (selectedConvoRef.current?._id === finalMsg.conversation) {
+    if (
+      selectedConvoRef.current?._id === finalMsg.conversation ||
+      selectedConvo?._id === finalMsg.conversation
+    ) {
       return [...prev, finalMsg];
     }
     return prev;
   });
+
 
   updateConvoList(finalMsg);
 };
