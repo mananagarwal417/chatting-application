@@ -358,7 +358,11 @@ function Dashboard() {
       );
 
       setMessages(list);
-      api.post(`/messages/${selectedConvo._id}/mark-seen`).catch(() => {});
+      socket.current.emit("markSeen", {
+  conversationId: selectedConvo._id,
+  userId: user._id
+});
+
 
     })
     .catch(() => {});
