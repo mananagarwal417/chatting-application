@@ -222,58 +222,76 @@ function Dashboard() {
 
   socket.current = globalSocket;
 
+  // ---------------------------
+  // HANDLE INCOMING MESSAGE
+  // ---------------------------
   const handleIncomingMessage = async (msg) => {
-  let finalContent = msg.content;
+    let finalContent = msg.content;
 
-  try {
-    let parsed = msg.content;
+    try {
+      let parsed = msg.content;
 
-    // If content is a string → try turning into object
-    if (typeof parsed === "string") {
-      parsed = JSON.parse(parsed);
-    }
-
-    // If it's encrypted → decrypt it
-    if (parsed && parsed.iv && parsed.data) {
-      const convo = conversationsRef.current.find(
-        (c) => c._id === msg.conversation
-      );
-      const aes = await getAesKey(convo);
-
-      if (aes) {
-        finalContent = await decrypt(aes, parsed);
+      // If content is a string → try turning into object
+      if (typeof parsed === "string") {
+        parsed = JSON.parse(parsed);
       }
+
+      // If it's encrypted → decrypt it
+      if (parsed && parsed.iv && parsed.data) {
+        const convo = conversationsRef.current.find(
+          (c) => c._id === msg.conversation
+        );
+        const aes = await getAesKey(convo);
+
+        if (aes) {
+          finalContent = await decrypt(aes, parsed);
+        }
+      }
+    } catch (e) {}
+
+    // Ignore echo of my own sent message
+    if (msg.sender._id === user._id) {
+      return;
     }
-  } catch (e) {}
 
-  // Ignore echo of my own sent message
-  if (msg.sender._id === user._id) {
-    return;
-  }
+    const finalMsg = { ...msg, content: finalContent };
 
-  const finalMsg = { ...msg, content: finalContent };
+    // ⭐ Mark as delivered
+    finalMsg.status = "delivered";
 
-  setMessages((prev) => {
-    if (
-      selectedConvoRef.current?._id === finalMsg.conversation ||
-      selectedConvo?._id === finalMsg.conversation
-    ) {
-      return [...prev, finalMsg];
-    }
-    return prev;
-  });
+    setMessages((prev) => {
+      if (
+        selectedConvoRef.current?._id === finalMsg.conversation ||
+        selectedConvo?._id === finalMsg.conversation
+      ) {
+        return [...prev, finalMsg];
+      }
+      return prev;
+    });
 
+    updateConvoList(finalMsg);
+  };
 
-  updateConvoList(finalMsg);
-};
-
-
+  // ---------------------------
+  // REGISTER SOCKET LISTENERS
+  // ---------------------------
   socket.current.on("receiveMessage", handleIncomingMessage);
+
+  // ⭐ NEW → When backend tells us message was SEEN
+  socket.current.on("messageSeen", (msgId) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m._id === msgId ? { ...m, status: "seen" } : m
+      )
+    );
+  });
 
   return () => {
     socket.current.off("receiveMessage", handleIncomingMessage);
+    socket.current.off("messageSeen");
   };
 }, [user]);
+
 
 
 
@@ -340,6 +358,8 @@ function Dashboard() {
       );
 
       setMessages(list);
+      api.post(`/messages/${selectedConvo._id}/mark-seen`).catch(() => {});
+
     })
     .catch(() => {});
 }, [selectedConvo]);
@@ -409,6 +429,7 @@ function Dashboard() {
     sender: { _id: user._id },
     conversation: selectedConvo._id,
     createdAt: new Date().toISOString(),
+    status: "sent",
   };
 
   setMessages((prev) => [...prev, localMessage]);
@@ -724,6 +745,13 @@ function Message({ message }) {
             minute: "2-digit",
           })}
         </p>
+        {isMe && (
+  <p className="text-xs mt-1 text-right">
+    {message.status === "sent" && "😌"}
+    {message.status === "delivered" && "🙂"}
+    {message.status === "seen" && "😃"}
+  </p>
+)}
       </div>
     </motion.div>
   );
