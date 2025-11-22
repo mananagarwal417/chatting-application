@@ -747,9 +747,9 @@ function Message({ message }) {
         </p>
         {isMe && (
   <p className="text-xs mt-1 text-right">
-    {message.status === "sent" && "😌"}
-    {message.status === "delivered" && "🙂"}
-    {message.status === "seen" && "😃"}
+    {message.status === "sent" && "sent"}
+    {message.status === "delivered" && "delivered"}
+    {message.status === "seen" && "seen"}
   </p>
 )}
       </div>
