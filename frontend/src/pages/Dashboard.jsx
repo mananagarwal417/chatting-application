@@ -684,7 +684,8 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
         <h2 className="text-lg font-semibold">{name}</h2>
       </div>
 
-      <div className="grow p-4 overflow-y-auto space-y-4 max-h-[calc(100vh-140px)] md:max-h-none">
+      <div className="grow p-4 overflow-y-auto space-y-4 max-h-[calc(100vh-140px)] wrap-break-words md:max-h-none">
+
         {messages.map((msg) => (
           <Message key={msg._id} message={msg} />
         ))}
