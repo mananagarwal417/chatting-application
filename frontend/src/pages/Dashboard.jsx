@@ -649,7 +649,7 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
   const endRef = useRef(null);
 
   const other = conversation.participants.find((p) => p.user._id !== user._id)?.user;
-  const name = other?.username;
+  const name = other?.username || "User";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -663,11 +663,11 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
   }, [messages]);
 
   return (
-    <div className="grow flex flex-col bg-gray-50">
+    <div className="grow flex flex-col bg-gray-50 h-screen md:h-auto">
 
-      <div className="p-4 bg-white shadow flex items-center space-x-4">
+      {/* ⭐ MOBILE HEADER FIX */}
+      <div className="p-4 bg-white shadow flex items-center space-x-4 sticky top-0 z-20">
 
-        {/* ⭐ MOBILE BACK BUTTON */}
         {onBack && (
           <button
             onClick={onBack}
@@ -684,14 +684,15 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
         <h2 className="text-lg font-semibold">{name}</h2>
       </div>
 
-      <div className="grow p-4 overflow-y-auto space-y-4 max-h-[calc(100vh-140px)] wrap-break-words md:max-h-none">
-
+      {/* ⭐ FIXED MESSAGE AREA — NO OVERFLOW ON MOBILE */}
+      <div className="grow p-4 overflow-y-auto space-y-4 wrap-break-word max-h-[calc(100vh-160px)] md:max-h-none">
         {messages.map((msg) => (
           <Message key={msg._id} message={msg} />
         ))}
         <div ref={endRef} />
       </div>
 
+      {/* ⭐ FIXED INPUT BAR */}
       <form
         onSubmit={handleSubmit}
         className="p-4 bg-white border-t border-gray-200 relative"
@@ -732,6 +733,7 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
     </div>
   );
 }
+
 
 // ───────────────────────────────────────────────────────────
 // MESSAGE BUBBLE
