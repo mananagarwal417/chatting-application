@@ -648,7 +648,16 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const endRef = useRef(null);
 
-  const other = conversation.participants.find((p) => p.user._id !== user._id)?.user;
+  // ⭐ FIX: Name not showing on mobile (supports both user shapes)
+  const otherParticipant = conversation.participants.find(
+    (p) => p.user?._id !== user._id
+  );
+
+  const other =
+    typeof otherParticipant?.user === "string"
+      ? conversation.participants.find((p) => p.user !== user._id)?.user
+      : otherParticipant?.user;
+
   const name = other?.username || "User";
 
   const handleSubmit = (e) => {
@@ -665,7 +674,7 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
   return (
     <div className="grow flex flex-col bg-gray-50 h-screen md:h-auto">
 
-      {/* ⭐ MOBILE HEADER FIX */}
+      {/* ⭐ FIXED MOBILE HEADER WITH NAME */}
       <div className="p-4 bg-white shadow flex items-center space-x-4 sticky top-0 z-20">
 
         {onBack && (
@@ -678,13 +687,13 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
         )}
 
         <div className="shrink-0 w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center font-bold">
-          {name.charAt(0).toUpperCase()}
+          {name?.charAt(0)?.toUpperCase()}
         </div>
 
         <h2 className="text-lg font-semibold">{name}</h2>
       </div>
 
-      {/* ⭐ FIXED MESSAGE AREA — NO OVERFLOW ON MOBILE */}
+      {/* ⭐ FIXED MESSAGES AREA (no overflow, no extra scroll on mobile) */}
       <div className="grow p-4 overflow-y-auto space-y-4 wrap-break-word max-h-[calc(100vh-160px)] md:max-h-none">
         {messages.map((msg) => (
           <Message key={msg._id} message={msg} />
@@ -692,12 +701,13 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
         <div ref={endRef} />
       </div>
 
-      {/* ⭐ FIXED INPUT BAR */}
+      {/* ⭐ FIXED INPUT BAR (text always visible while typing) */}
       <form
         onSubmit={handleSubmit}
         className="p-4 bg-white border-t border-gray-200 relative"
       >
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-3 w-full">
+
           <button
             type="button"
             onClick={() => setShowEmoji((p) => !p)}
@@ -733,6 +743,7 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
     </div>
   );
 }
+
 
 
 // ───────────────────────────────────────────────────────────
