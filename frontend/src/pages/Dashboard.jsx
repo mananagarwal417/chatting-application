@@ -266,11 +266,8 @@ function Dashboard() {
       const finalMsg = { ...msg, content: finalContent };
 
       // ⭐ FIX: Status & ID Synchronization
-      // If the message is from ME (echo), we need to update our temporary local message
-      // with the real ID from the server so that "seen" updates work later.
       if (msg.sender._id === user._id) {
         setMessages((prev) => {
-          // Find the temporary message (it has a number ID)
           const tempIndex = prev.findIndex(
             (m) =>
               m.status === "sent" &&
@@ -280,7 +277,6 @@ function Dashboard() {
 
           if (tempIndex !== -1) {
             const updated = [...prev];
-            // Update temp message with real ID and mark delivered
             updated[tempIndex] = {
               ...updated[tempIndex],
               _id: finalMsg._id,
@@ -519,6 +515,7 @@ function ConversationList({
   onCreateConvo,
   onLogout,
 }) {
+  const user = useUser();
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
 
@@ -544,15 +541,18 @@ function ConversationList({
 
   return (
     <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col h-full">
-      {/* Header with Logout */}
+      {/* Header with USER BUTTON (For Logout) */}
       <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
         <h2 className="font-bold text-lg">Chats</h2>
-        <button
-          onClick={onLogout}
-          className="text-xs text-red-600 border border-red-200 px-3 py-1 rounded hover:bg-red-50"
+        
+        {/* ⭐ USER BUTTON (Click to logout) */}
+        <div 
+          onClick={() => { if(window.confirm("Are you sure you want to logout?")) onLogout() }}
+          className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold cursor-pointer hover:opacity-80 transition-opacity"
+          title="Click to Logout"
         >
-          Logout
-        </button>
+          {user?.username?.charAt(0).toUpperCase()}
+        </div>
       </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
@@ -741,7 +741,7 @@ function ChatWindow({
             placeholder="Type a message..."
             className="flex-1 px-4 py-2 border border-gray-300 rounded-full 
               focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500
-              text-gray-900 bg-white" // ⭐ Force text visibility
+              text-gray-900 bg-white" 
           />
 
           <button
