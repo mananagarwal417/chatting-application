@@ -26,7 +26,7 @@ function Dashboard() {
   const [selectedConvo, setSelectedConvo] = useState(null);
   const [messages, setMessages] = useState([]);
   
-  // ⭐ NEW: State to track unread messages per conversation
+  // State to track unread messages per conversation
   const [unreadCounts, setUnreadCounts] = useState({});
 
   const socket = useRef(null);
@@ -54,7 +54,7 @@ function Dashboard() {
     }
   }, [isMobile]);
 
-  // ⭐ NEW: HANDLE HARDWARE/BROWSER BACK BUTTON
+  // ⭐ HANDLE HARDWARE/BROWSER BACK BUTTON
   useEffect(() => {
     const handlePopState = (event) => {
       // If back button is pressed and we are on mobile in chat view
@@ -311,8 +311,6 @@ function Dashboard() {
       finalMsg.status = "delivered";
 
       // ⭐ FEATURE: Unread Count Logic
-      // If we are NOT currently viewing the conversation that just received a message,
-      // increment the unread count for that conversation.
       if (selectedConvoRef.current?._id !== msg.conversation) {
         setUnreadCounts((prev) => ({
           ...prev,
@@ -553,7 +551,7 @@ function Dashboard() {
 }
 
 // ───────────────────────────────────────────────────────────
-// CONVERSATION LIST (UPDATED HEADER)
+// CONVERSATION LIST (UPDATED SEARCH & HEADER)
 // ───────────────────────────────────────────────────────────
 
 function ConversationList({
@@ -574,10 +572,20 @@ function ConversationList({
       return;
     }
     const delay = setTimeout(() => {
+      // ⭐ CHANGED: Search by phone now
       api
-        .get(`/users?search=${search}`)
-        .then((res) => setSearchResults(res.data))
-        .catch(() => {});
+        .get(`/users/phone-search?phone=${search}`)
+        .then((res) => {
+          // Phone search usually returns a single object, so wrap in array
+          if(res.data) {
+             setSearchResults([res.data]);
+          } else {
+             setSearchResults([]);
+          }
+        })
+        .catch(() => {
+             setSearchResults([]);
+        });
     }, 300);
     return () => clearTimeout(delay);
   }, [search]);
@@ -597,12 +605,19 @@ function ConversationList({
             Hello, {user?.username} 👋
           </h2>
         </div>
+        <button 
+          onClick={() => { if(window.confirm("Logout?")) onLogout() }}
+          className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-full transition-colors"
+        >
+          Logout
+        </button>
       </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
         <input
           type="text"
-          placeholder="Search users..."
+          // ⭐ CHANGED Placeholder
+          placeholder="Enter phone number..."
           onChange={(e) => setSearch(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
