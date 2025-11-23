@@ -50,6 +50,20 @@ function Dashboard() {
     }
   }, [isMobile]);
 
+  // ⭐ NEW: HANDLE HARDWARE/BROWSER BACK BUTTON
+  useEffect(() => {
+    const handlePopState = (event) => {
+      // If back button is pressed and we are on mobile in chat view
+      if (isMobile && mobileView === "chat") {
+        setMobileView("list");
+        setSelectedConvo(null);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [isMobile, mobileView]);
+
   // ─────────────────────── KEY STORAGE ───────────────────────
 
   const privateKeyRef = useRef(null);
@@ -393,7 +407,11 @@ function Dashboard() {
 
   const handleSelectConvo = (convo) => {
     setSelectedConvo(convo);
-    if (isMobile) setMobileView("chat");
+    if (isMobile) {
+      setMobileView("chat");
+      // ⭐ PUSH HISTORY STATE so back button works
+      window.history.pushState({ chatOpen: true }, "");
+    }
   };
 
   const handleCreateConvo = (targetUser) => {
@@ -409,7 +427,10 @@ function Dashboard() {
           });
         }
         setSelectedConvo(newConvo);
-        if (isMobile) setMobileView("chat");
+        if (isMobile) {
+          setMobileView("chat");
+          window.history.pushState({ chatOpen: true }, "");
+        }
       })
       .catch(() => {});
   };
@@ -470,8 +491,8 @@ function Dashboard() {
             messages={messages}
             onSendMessage={handleSendMessage}
             onBack={() => {
-              setMobileView("list");
-              setSelectedConvo(null);
+              // ⭐ Trigger Browser Back to keep history clean
+              window.history.back();
             }}
             isMobile={true}
           />
@@ -505,7 +526,7 @@ function Dashboard() {
 }
 
 // ───────────────────────────────────────────────────────────
-// CONVERSATION LIST
+// CONVERSATION LIST (UPDATED HEADER)
 // ───────────────────────────────────────────────────────────
 
 function ConversationList({
@@ -541,18 +562,22 @@ function ConversationList({
 
   return (
     <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col h-full">
-      {/* Header with USER BUTTON (For Logout) */}
-      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-        <h2 className="font-bold text-lg">Chats</h2>
-        
-        {/* ⭐ USER BUTTON (Click to logout) */}
-        <div 
-          onClick={() => { if(window.confirm("Are you sure you want to logout?")) onLogout() }}
-          className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold cursor-pointer hover:opacity-80 transition-opacity"
-          title="Click to Logout"
-        >
-          {user?.username?.charAt(0).toUpperCase()}
+      {/* ⭐ FIXED HEADER: Shows "Hello, [Name]" */}
+      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-white shadow-sm z-10">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">
+            Hello, {user?.username} 👋
+          </h2>
         </div>
+
+        <button
+          onClick={() => {
+            if (window.confirm("Logout?")) onLogout();
+          }}
+          className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-full transition-colors"
+        >
+          Logout
+        </button>
       </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
@@ -741,7 +766,7 @@ function ChatWindow({
             placeholder="Type a message..."
             className="flex-1 px-4 py-2 border border-gray-300 rounded-full 
               focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500
-              text-gray-900 bg-white" 
+              text-gray-900 bg-white"
           />
 
           <button
@@ -808,11 +833,8 @@ function WelcomeScreen() {
   const user = useUser();
   return (
     <div className="grow flex flex-col items-center justify-center text-center bg-gray-50">
-      <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-2xl font-bold mb-4">
-        {user.username.charAt(0).toUpperCase()}
-      </div>
-      <h2 className="text-2xl font-bold text-gray-800">
-        Welcome, {user.username}!
+      <h2 className="text-3xl font-bold text-gray-800">
+        Hello, {user.username}!
       </h2>
       <p className="mt-2 text-gray-500">
         Select a conversation from the sidebar to start chatting.
