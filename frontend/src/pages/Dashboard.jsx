@@ -27,7 +27,7 @@ function Dashboard() {
   const [messages, setMessages] = useState([]);
   const socket = useRef(null);
   const selectedConvoRef = useRef(null);
-  const conversationsRef = useRef(conversations); // ✅ MODIFIED
+  const conversationsRef = useRef(conversations);
 
   const navigate = useNavigate();
 
@@ -47,7 +47,6 @@ function Dashboard() {
   useEffect(() => {
     if (!isMobile) {
       setMobileView("list");
-      // ❌ removed setSelectedConvo(selectedConvo); it caused unnecessary re-renders
     }
   }, [isMobile]);
 
@@ -55,7 +54,6 @@ function Dashboard() {
 
   const privateKeyRef = useRef(null);
   const publicJwkRef = useRef(null);
-
   const publicKeyCache = useRef({});
   const aesKeyCache = useRef({});
 
@@ -151,15 +149,12 @@ function Dashboard() {
     return utf8Decoder.decode(plain);
   }
 
-  // ✅ FIXED: robust other-user resolution for AES key derivation
   async function getAesKey(convo) {
     if (!convo || !user) return null;
     if (aesKeyCache.current[convo._id]) return aesKeyCache.current[convo._id];
 
-    // Find other participant id safely (handles both string and object)
     const otherParticipant = convo.participants.find((p) => {
-      const uid =
-        typeof p.user === "string" ? p.user : p.user?._id;
+      const uid = typeof p.user === "string" ? p.user : p.user?._id;
       return uid && uid !== user._id;
     });
 
@@ -219,13 +214,22 @@ function Dashboard() {
       });
   }, [navigate]);
 
+  // ─────────────────────── LOGOUT FUNCTION ───────────────────────
+  const handleLogout = () => {
+    if (globalSocket) {
+      globalSocket.disconnect();
+      globalSocket = null;
+    }
+    removeToken();
+    navigate("/login");
+  };
+
   // ─────────────────────── SOCKET ───────────────────────
 
   useEffect(() => {
     selectedConvoRef.current = selectedConvo;
   }, [selectedConvo]);
 
-  // ✅ keep conversationsRef synced
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
@@ -233,31 +237,25 @@ function Dashboard() {
   useEffect(() => {
     if (!user) return;
 
-    // Use the single global socket
     if (!globalSocket) {
       globalSocket = io(SOCKET_URL, { query: { userId: user._id } });
     }
 
     socket.current = globalSocket;
 
-    // ---------------------------
-    // HANDLE INCOMING MESSAGE
-    // ---------------------------
     const handleIncomingMessage = async (msg) => {
       let finalContent = msg.content;
 
+      // 1. Decryption Logic
       try {
         if (typeof msg.content === "string") {
           const trimmed = msg.content.trim();
-
           if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
             const parsed = JSON.parse(trimmed);
-
             if (parsed.iv && parsed.data) {
               const convo = conversationsRef.current.find(
                 (c) => c._id === msg.conversation
               );
-
               const aes = await getAesKey(convo);
               if (aes) finalContent = await decrypt(aes, parsed);
             }
@@ -265,17 +263,40 @@ function Dashboard() {
         }
       } catch {}
 
-      // Ignore echo of my own sent message
-      if (msg.sender._id === user._id) {
-        return;
-      }
-
       const finalMsg = { ...msg, content: finalContent };
 
-      // ⭐ Mark as delivered
+      // ⭐ FIX: Status & ID Synchronization
+      // If the message is from ME (echo), we need to update our temporary local message
+      // with the real ID from the server so that "seen" updates work later.
+      if (msg.sender._id === user._id) {
+        setMessages((prev) => {
+          // Find the temporary message (it has a number ID)
+          const tempIndex = prev.findIndex(
+            (m) =>
+              m.status === "sent" &&
+              typeof m._id === "number" &&
+              m.conversation === msg.conversation
+          );
+
+          if (tempIndex !== -1) {
+            const updated = [...prev];
+            // Update temp message with real ID and mark delivered
+            updated[tempIndex] = {
+              ...updated[tempIndex],
+              _id: finalMsg._id,
+              status: "delivered",
+            };
+            return updated;
+          }
+          return prev;
+        });
+        return; // Stop here, don't add duplicate
+      }
+
+      // If message is from others
       finalMsg.status = "delivered";
 
-      // ⭐ If user is actively viewing this conversation → mark seen immediately
+      // If we are looking at this conversation, mark it seen immediately
       if (
         selectedConvoRef.current &&
         selectedConvoRef.current._id === msg.conversation
@@ -299,12 +320,9 @@ function Dashboard() {
       updateConvoList(finalMsg);
     };
 
-    // ---------------------------
-    // REGISTER SOCKET LISTENERS
-    // ---------------------------
     socket.current.on("receiveMessage", handleIncomingMessage);
 
-    // ⭐ NEW → When backend tells us message was SEEN
+    // ⭐ STATUS UPDATE: Seen
     socket.current.on("messageSeen", (msgId) => {
       setMessages((prev) =>
         prev.map((m) => (m._id === msgId ? { ...m, status: "seen" } : m))
@@ -321,7 +339,6 @@ function Dashboard() {
 
   useEffect(() => {
     if (!user) return;
-
     api
       .get("/conversations")
       .then((res) => setConversations(res.data))
@@ -332,25 +349,20 @@ function Dashboard() {
 
   useEffect(() => {
     if (!selectedConvo) return;
+    setMessages([]);
 
-    setMessages([]); // Clear old chat instantly when switching users
-
-    // Rejoin room when component reloads
     socket.current.emit("joinRoom", selectedConvo._id);
 
     api
       .get(`/messages/${selectedConvo._id}`)
       .then(async (res) => {
         const aes = await getAesKey(selectedConvo);
-
         const list = await Promise.all(
           res.data.map(async (m) => {
             let content = m.content;
-
             try {
               const trimmed =
                 typeof content === "string" ? content.trim() : "";
-
               if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
                 const parsed = JSON.parse(trimmed);
                 if (parsed.iv && parsed.data && aes) {
@@ -358,13 +370,10 @@ function Dashboard() {
                 }
               }
             } catch {}
-
             return { ...m, content };
           })
         );
-
         setMessages(list);
-
         socket.current.emit("markSeen", {
           conversationId: selectedConvo._id,
           userId: user._id,
@@ -373,24 +382,18 @@ function Dashboard() {
       .catch(() => {});
   }, [selectedConvo]);
 
-  // ─────────────────────── UPDATE CHAT LIST ───────────────────────
-
   const updateConvoList = (msg) => {
     setConversations((prev) => {
       const i = prev.findIndex((c) => c._id === msg.conversation);
       if (i === -1) return prev;
-
       const updated = {
         ...prev[i],
         lastMessage: msg.content,
         lastMessageAt: msg.createdAt,
       };
-
       return [updated, ...prev.filter((c) => c._id !== msg.conversation)];
     });
   };
-
-  // ─────────────────────── SELECT / CREATE CONVERSATIONS ───────────────────────
 
   const handleSelectConvo = (convo) => {
     setSelectedConvo(convo);
@@ -402,7 +405,6 @@ function Dashboard() {
       .post("/conversations", { targetUserId: targetUser._id })
       .then((res) => {
         const newConvo = res.data;
-
         if (!conversations.find((c) => c._id === newConvo._id)) {
           setConversations((prev) => [newConvo, ...prev]);
           socket.current.emit("notifyNewConversation", {
@@ -410,31 +412,26 @@ function Dashboard() {
             creatorId: user._id,
           });
         }
-
         setSelectedConvo(newConvo);
         if (isMobile) setMobileView("chat");
       })
       .catch(() => {});
   };
 
-  // ─────────────────────── SEND MESSAGE ───────────────────────
-
   const handleSendMessage = async (content) => {
     if (!selectedConvo) return;
 
     let sendContent = content;
-
-    // Encrypt before sending
     const aes = await getAesKey(selectedConvo);
     if (aes) {
       const encrypted = await encrypt(aes, content);
       sendContent = JSON.stringify(encrypted);
     }
 
-    // ⭐ Add the plaintext message instantly
+    // Add local message with Temp ID
     const localMessage = {
-      _id: Date.now(), // temporary ID
-      content, // plaintext
+      _id: Date.now(), // Temp ID (number)
+      content,
       sender: { _id: user._id },
       conversation: selectedConvo._id,
       createdAt: new Date().toISOString(),
@@ -443,7 +440,6 @@ function Dashboard() {
 
     setMessages((prev) => [...prev, localMessage]);
 
-    // Send encrypted to backend
     socket.current.emit("sendMessage", {
       content: sendContent,
       conversationId: selectedConvo._id,
@@ -451,30 +447,27 @@ function Dashboard() {
     });
   };
 
-  // ─────────────────────── LOADING STATE ───────────────────────
-
   if (!user) {
     return (
       <div className="h-full flex items-center justify-center">Loading...</div>
     );
   }
 
-  // ─────────────────────── UI RENDER ───────────────────────
-
   return (
     <UserContext.Provider value={user}>
       <div className="flex h-full">
-        {/* ⭐ MOBILE LIST ONLY */}
+        {/* ⭐ MOBILE LIST */}
         {isMobile && mobileView === "list" && (
           <ConversationList
             conversations={conversations}
             onSelect={handleSelectConvo}
             activeId={selectedConvo?._id}
             onCreateConvo={handleCreateConvo}
+            onLogout={handleLogout}
           />
         )}
 
-        {/* ⭐ MOBILE CHAT ONLY */}
+        {/* ⭐ MOBILE CHAT */}
         {isMobile && mobileView === "chat" && selectedConvo && (
           <ChatWindow
             conversation={selectedConvo}
@@ -484,10 +477,11 @@ function Dashboard() {
               setMobileView("list");
               setSelectedConvo(null);
             }}
+            isMobile={true}
           />
         )}
 
-        {/* ⭐ DESKTOP FULL VIEW */}
+        {/* ⭐ DESKTOP VIEW */}
         {!isMobile && (
           <>
             <ConversationList
@@ -495,13 +489,14 @@ function Dashboard() {
               onSelect={handleSelectConvo}
               activeId={selectedConvo?._id}
               onCreateConvo={handleCreateConvo}
+              onLogout={handleLogout}
             />
-
             {selectedConvo ? (
               <ChatWindow
                 conversation={selectedConvo}
                 messages={messages}
                 onSendMessage={handleSendMessage}
+                isMobile={false}
               />
             ) : (
               <WelcomeScreen />
@@ -522,6 +517,7 @@ function ConversationList({
   onSelect,
   activeId,
   onCreateConvo,
+  onLogout,
 }) {
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -531,14 +527,12 @@ function ConversationList({
       setSearchResults([]);
       return;
     }
-
     const delay = setTimeout(() => {
       api
         .get(`/users?search=${search}`)
         .then((res) => setSearchResults(res.data))
         .catch(() => {});
     }, 300);
-
     return () => clearTimeout(delay);
   }, [search]);
 
@@ -549,55 +543,49 @@ function ConversationList({
   };
 
   return (
-    <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col h-full p-4">
+    <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col h-full">
+      {/* Header with Logout */}
+      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+        <h2 className="font-bold text-lg">Chats</h2>
+        <button
+          onClick={onLogout}
+          className="text-xs text-red-600 border border-red-200 px-3 py-1 rounded hover:bg-red-50"
+        >
+          Logout
+        </button>
+      </div>
+
       <div className="p-4 border-b border-gray-200 shrink-0">
         <input
           type="text"
-          placeholder="Enter phone to find user"
-          onChange={(e) => {
-            const phone = e.target.value;
-
-            if (!phone) return setSearchResults([]);
-
-            api
-              .get(`/users/phone-search?phone=${phone}`)
-              .then((res) => setSearchResults([res.data]))
-              .catch(() => setSearchResults([]));
-          }}
-          className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg 
-            focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          placeholder="Search users..."
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
       </div>
 
       <div className="grow overflow-y-auto">
         {searchResults.length > 0 && (
           <div className="border-b border-gray-200">
-            <h3 className="p-2 text-xs font-semibold text-gray-500">Users</h3>
-
+            <h3 className="p-2 text-xs font-semibold text-gray-500">
+              Search Results
+            </h3>
             {searchResults.map((user) => (
-              <motion.div
+              <div
                 key={user._id}
-                initial={{ opacity: 0, x: -15 }}
-                animate={{ opacity: 1, x: 0 }}
-                whileHover={{ scale: 1.02 }}
-                className="flex items-center p-4 cursor-pointer hover:bg-gray-100"
                 onClick={() => handleSelectUser(user)}
+                className="flex items-center p-3 cursor-pointer hover:bg-gray-100"
               >
-                <div className="shrink-0 w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center font-bold">
+                <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center font-bold text-sm">
                   {user.username.charAt(0).toUpperCase()}
                 </div>
-
-                <div className="grow ml-3">
-                  <h3 className="text-sm font-medium text-gray-900">
-                    {user.username}
-                  </h3>
-                </div>
-              </motion.div>
+                <span className="ml-3 font-medium text-sm">
+                  {user.username}
+                </span>
+              </div>
             ))}
           </div>
         )}
-
-        <h3 className="p-2 text-xs font-semibold text-gray-500">Chats</h3>
 
         {conversations.map((convo) => (
           <ConversationItem
@@ -616,10 +604,9 @@ function ConversationItem({ convo, isActive, onClick }) {
   const user = useUser();
   if (!user) return null;
 
-  // ✅ FIX: robust other-user resolution like ChatWindow
+  // Robust participant check
   const otherParticipant = convo.participants.find((p) => {
-    const uid =
-      typeof p.user === "string" ? p.user : p.user?._id;
+    const uid = typeof p.user === "string" ? p.user : p.user?._id;
     return uid && uid !== user._id;
   });
 
@@ -630,30 +617,25 @@ function ConversationItem({ convo, isActive, onClick }) {
         )?.user
       : otherParticipant?.user;
 
-  const name = other?.username || "Chat";
+  const name = other?.username || "Unknown";
 
   return (
-    <motion.div
-      initial={{ opacity: 0, x: -15 }}
-      animate={{ opacity: 1, x: 0 }}
-      whileHover={{ scale: 1.02 }}
-      transition={{ duration: 0.2 }}
+    <div
       onClick={onClick}
-      className={`flex items-center p-4 cursor-pointer hover:bg-gray-100 transition-colors ${
+      className={`flex items-center p-4 cursor-pointer hover:bg-gray-100 border-b border-gray-100 ${
         isActive ? "bg-indigo-50" : ""
       }`}
     >
-      <div className="shrink-0 w-12 h-12 bg-indigo-500 text-white rounded-full flex items-center justify-center">
+      <div className="shrink-0 w-10 h-10 bg-indigo-500 text-white rounded-full flex items-center justify-center font-bold">
         {name.charAt(0).toUpperCase()}
       </div>
-
       <div className="grow ml-3 overflow-hidden">
-        <h3 className="text-sm font-medium">{name}</h3>
-        <p className="text-sm text-gray-500 truncate">
-          {convo.lastMessage || "..."}
+        <h3 className="text-sm font-medium text-gray-900">{name}</h3>
+        <p className="text-xs text-gray-500 truncate">
+          {convo.lastMessage || "Start chatting..."}
         </p>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -661,23 +643,32 @@ function ConversationItem({ convo, isActive, onClick }) {
 // CHAT WINDOW
 // ───────────────────────────────────────────────────────────
 
-function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
+function ChatWindow({
+  conversation,
+  messages,
+  onSendMessage,
+  onBack,
+  isMobile,
+}) {
   const user = useUser();
   const [content, setContent] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const endRef = useRef(null);
 
-  // ⭐ FIX: Name not showing on mobile (supports both user shapes)
-  const otherRaw = conversation.participants.find(
-    (p) => (p.user?._id || p.user) !== user._id
-  )?.user;
+  // ⭐ FIXED NAME DISPLAY
+  const otherParticipant = conversation.participants.find((p) => {
+    const uid = typeof p.user === "string" ? p.user : p.user?._id;
+    return uid && uid !== user._id;
+  });
 
-  const other =
-    typeof otherRaw === "string"
-      ? conversation.participants.find((p) => p.user?._id === otherRaw)?.user
-      : otherRaw;
+  const otherUser =
+    typeof otherParticipant?.user === "string"
+      ? conversation.participants.find(
+          (p) => p.user?._id === otherParticipant.user
+        )?.user
+      : otherParticipant?.user;
 
-  const name = other?.username || "User";
+  const name = otherUser?.username || "Chat";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -688,52 +679,53 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, showEmoji]);
 
   return (
-    <div className="grow flex flex-col bg-gray-50 h-screen md:h-auto">
-      {/* ⭐ FIXED MOBILE HEADER WITH NAME */}
-      <div className="p-4 bg-white shadow flex items-center space-x-4 sticky top-0 z-20">
+    <div
+      className={`flex flex-col bg-gray-50 ${
+        isMobile ? "fixed inset-0 z-50 h-dvh" : "grow h-full"
+      }`}
+    >
+      {/* Header */}
+      <div className="p-3 bg-white shadow-sm flex items-center shrink-0 border-b border-gray-200">
         {onBack && (
           <button
             onClick={onBack}
-            className="p-2 bg-gray-200 rounded-full mr-2 md:hidden"
+            className="p-2 mr-2 text-gray-600 hover:bg-gray-100 rounded-full"
           >
             ←
           </button>
         )}
-
-        <div className="shrink-0 w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center font-bold">
-          {name?.charAt(0)?.toUpperCase()}
+        <div className="w-9 h-9 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold shrink-0">
+          {name.charAt(0).toUpperCase()}
         </div>
-
-        <h2 className="text-lg font-semibold">{name}</h2>
+        <h2 className="ml-3 text-lg font-semibold text-gray-800 truncate">
+          {name}
+        </h2>
       </div>
 
-      {/* ⭐ FIXED MESSAGES AREA (no overflow, no extra scroll on mobile) */}
-      <div className="grow p-4 overflow-y-auto space-y-4 wrap-break-word max-h-[calc(100vh-160px)] md:max-h-none">
-        {messages.map((msg) => (
-          <Message key={msg._id} message={msg} />
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {messages.map((msg, index) => (
+          <Message key={msg._id || index} message={msg} />
         ))}
         <div ref={endRef} />
       </div>
 
-      {/* ⭐ FIXED INPUT BAR (text always visible while typing) */}
-      <form
-        onSubmit={handleSubmit}
-        className="p-4 bg-white border-t border-gray-200 relative"
-      >
-        <div className="flex items-center space-x-3 w-full">
+      {/* Input Area */}
+      <div className="shrink-0 p-3 bg-white border-t border-gray-200 relative">
+        <form onSubmit={handleSubmit} className="flex items-center space-x-2">
           <button
             type="button"
-            onClick={() => setShowEmoji((p) => !p)}
-            className="text-2xl"
+            onClick={() => setShowEmoji(!showEmoji)}
+            className="p-2 text-gray-500 hover:text-indigo-600"
           >
             🙂
           </button>
 
           {showEmoji && (
-            <div className="absolute bottom-16 left-4 z-50">
+            <div className="absolute bottom-16 left-2 z-50 shadow-xl">
               <EmojiPicker
                 onEmojiClick={(emoji) =>
                   setContent((prev) => prev + emoji.emoji)
@@ -746,18 +738,20 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
             type="text"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Type your message..."
-            className="grow px-4 py-2 border border-gray-300 rounded-full"
+            placeholder="Type a message..."
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-full 
+              focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500
+              text-gray-900 bg-white" // ⭐ Force text visibility
           />
 
           <button
             type="submit"
-            className="px-4 py-2 bg-indigo-600 text-white rounded-full hover:bg-indigo-700"
+            className="px-4 py-2 bg-indigo-600 text-white rounded-full font-medium hover:bg-indigo-700 transition"
           >
             Send
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }
@@ -772,47 +766,57 @@ function Message({ message }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
       className={`flex ${isMe ? "justify-end" : "justify-start"}`}
     >
       <div
-        className={`max-w-xs px-4 py-3 rounded-2xl shadow ${
+        className={`max-w-[75%] px-4 py-2 rounded-2xl shadow-sm text-sm ${
           isMe
-            ? "bg-indigo-500 text-white rounded-br-lg"
-            : "bg-white text-gray-900 rounded-bl-lg"
+            ? "bg-indigo-600 text-white rounded-br-none"
+            : "bg-white text-gray-800 border border-gray-100 rounded-bl-none"
         }`}
       >
-        <p>{message.content}</p>
-        <p className="text-xs opacity-70 text-right mt-1">
-          {new Date(message.createdAt).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </p>
-        {isMe && (
-          <p className="text-xs mt-1 text-right">
-            {message.status === "sent" && "sent"}
-            {message.status === "delivered" && "delivered"}
-            {message.status === "seen" && "seen"}
-          </p>
-        )}
+        <p className="leading-relaxed">{message.content}</p>
+        <div
+          className={`text-[10px] mt-1 flex items-center justify-end space-x-1 ${
+            isMe ? "text-indigo-100" : "text-gray-400"
+          }`}
+        >
+          <span>
+            {new Date(message.createdAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+          {isMe && (
+            <span className="font-bold ml-1">
+              {message.status === "sent" && "✓"}
+              {message.status === "delivered" && "✓✓"}
+              {message.status === "seen" && (
+                <span className="text-blue-200">✓✓</span>
+              )}
+            </span>
+          )}
+        </div>
       </div>
     </motion.div>
   );
 }
 
-// ───────────────────────────────────────────────────────────
-// WELCOME SCREEN
-// ───────────────────────────────────────────────────────────
-
 function WelcomeScreen() {
   const user = useUser();
   return (
-    <div className="grow flex flex-col items-center justify-center text-center">
-      <h2 className="text-2xl font-semibold">Welcome, {user.username}!</h2>
-      <p className="mt-2 text-gray-500">Select a chat to start messaging.</p>
+    <div className="grow flex flex-col items-center justify-center text-center bg-gray-50">
+      <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-2xl font-bold mb-4">
+        {user.username.charAt(0).toUpperCase()}
+      </div>
+      <h2 className="text-2xl font-bold text-gray-800">
+        Welcome, {user.username}!
+      </h2>
+      <p className="mt-2 text-gray-500">
+        Select a conversation from the sidebar to start chatting.
+      </p>
     </div>
   );
 }
