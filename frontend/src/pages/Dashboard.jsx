@@ -361,14 +361,6 @@ function Dashboard() {
     // Listeners
     socket.current.on("receiveMessage", handleIncomingMessage);
 
-    // ⭐ NEW LISTENER: If backend emits "newConversation" event
-    socket.current.on("newConversation", (newConvo) => {
-      setConversations((prev) => {
-        if (prev.find((c) => c._id === newConvo._id)) return prev;
-        return [newConvo, ...prev];
-      });
-    });
-
     socket.current.on("messageSeen", (msgId) => {
       setMessages((prev) =>
         prev.map((m) => (m._id === msgId ? { ...m, status: "seen" } : m))
@@ -378,7 +370,6 @@ function Dashboard() {
     return () => {
       socket.current.off("receiveMessage", handleIncomingMessage);
       socket.current.off("messageSeen");
-      socket.current.off("newConversation");
     };
   }, [user]);
 
@@ -464,10 +455,8 @@ function Dashboard() {
         const newConvo = res.data;
         if (!conversations.find((c) => c._id === newConvo._id)) {
           setConversations((prev) => [newConvo, ...prev]);
-          socket.current.emit("notifyNewConversation", {
-            ...newConvo,
-            creatorId: user._id,
-          });
+          // ⭐ REMOVED: The socket emit that caused premature notification
+          // socket.current.emit("notifyNewConversation", ... );
         }
         setSelectedConvo(newConvo);
         setUnreadCounts((prev) => ({ ...prev, [newConvo._id]: 0 }));
