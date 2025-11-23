@@ -605,12 +605,7 @@ function ConversationList({
             Hello, {user?.username} 👋
           </h2>
         </div>
-        <button 
-          onClick={() => { if(window.confirm("Logout?")) onLogout() }}
-          className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-full transition-colors"
-        >
-          Logout
-        </button>
+        
       </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
