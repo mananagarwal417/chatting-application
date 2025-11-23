@@ -25,6 +25,10 @@ function Dashboard() {
   const [conversations, setConversations] = useState([]);
   const [selectedConvo, setSelectedConvo] = useState(null);
   const [messages, setMessages] = useState([]);
+  
+  // ⭐ NEW: State to track unread messages per conversation
+  const [unreadCounts, setUnreadCounts] = useState({});
+
   const socket = useRef(null);
   const selectedConvoRef = useRef(null);
   const conversationsRef = useRef(conversations);
@@ -306,6 +310,16 @@ function Dashboard() {
       // If message is from others
       finalMsg.status = "delivered";
 
+      // ⭐ FEATURE: Unread Count Logic
+      // If we are NOT currently viewing the conversation that just received a message,
+      // increment the unread count for that conversation.
+      if (selectedConvoRef.current?._id !== msg.conversation) {
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [msg.conversation]: (prev[msg.conversation] || 0) + 1,
+        }));
+      }
+
       // If we are looking at this conversation, mark it seen immediately
       if (
         selectedConvoRef.current &&
@@ -407,6 +421,13 @@ function Dashboard() {
 
   const handleSelectConvo = (convo) => {
     setSelectedConvo(convo);
+    
+    // ⭐ Reset unread count when opening a conversation
+    setUnreadCounts((prev) => ({
+      ...prev,
+      [convo._id]: 0,
+    }));
+
     if (isMobile) {
       setMobileView("chat");
       // ⭐ PUSH HISTORY STATE so back button works
@@ -427,6 +448,10 @@ function Dashboard() {
           });
         }
         setSelectedConvo(newConvo);
+        
+        // ⭐ Reset count on create/select
+        setUnreadCounts((prev) => ({ ...prev, [newConvo._id]: 0 }));
+
         if (isMobile) {
           setMobileView("chat");
           window.history.pushState({ chatOpen: true }, "");
@@ -481,6 +506,7 @@ function Dashboard() {
             activeId={selectedConvo?._id}
             onCreateConvo={handleCreateConvo}
             onLogout={handleLogout}
+            unreadCounts={unreadCounts} // Pass counts
           />
         )}
 
@@ -507,6 +533,7 @@ function Dashboard() {
               activeId={selectedConvo?._id}
               onCreateConvo={handleCreateConvo}
               onLogout={handleLogout}
+              unreadCounts={unreadCounts} // Pass counts
             />
             {selectedConvo ? (
               <ChatWindow
@@ -535,6 +562,7 @@ function ConversationList({
   activeId,
   onCreateConvo,
   onLogout,
+  unreadCounts, // Receive counts
 }) {
   const user = useUser();
   const [search, setSearch] = useState("");
@@ -569,9 +597,7 @@ function ConversationList({
             Hello, {user?.username} 👋
           </h2>
         </div>
-
-         
-      </div> 
+      </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
         <input
@@ -611,6 +637,7 @@ function ConversationList({
             convo={convo}
             isActive={convo._id === activeId}
             onClick={() => onSelect(convo)}
+            unreadCount={unreadCounts[convo._id] || 0} // Pass specific count
           />
         ))}
       </div>
@@ -618,7 +645,7 @@ function ConversationList({
   );
 }
 
-function ConversationItem({ convo, isActive, onClick }) {
+function ConversationItem({ convo, isActive, onClick, unreadCount }) {
   const user = useUser();
   if (!user) return null;
 
@@ -653,6 +680,13 @@ function ConversationItem({ convo, isActive, onClick }) {
           {convo.lastMessage || "Start chatting..."}
         </p>
       </div>
+      
+      {/* ⭐ BADGE: Show unread count if > 0 */}
+      {unreadCount > 0 && (
+        <div className="ml-2 shrink-0 bg-red-500 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full">
+          {unreadCount > 9 ? "9+" : unreadCount}
+        </div>
+      )}
     </div>
   );
 }
