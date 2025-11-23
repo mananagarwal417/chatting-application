@@ -229,25 +229,24 @@ function Dashboard() {
     let finalContent = msg.content;
 
     try {
-      let parsed = msg.content;
+  if (typeof msg.content === "string") {
+    const trimmed = msg.content.trim();
 
-      // If content is a string → try turning into object
-      if (typeof parsed === "string") {
-        parsed = JSON.parse(parsed);
-      }
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      const parsed = JSON.parse(trimmed);
 
-      // If it's encrypted → decrypt it
-      if (parsed && parsed.iv && parsed.data) {
+      if (parsed.iv && parsed.data) {
         const convo = conversationsRef.current.find(
           (c) => c._id === msg.conversation
         );
-        const aes = await getAesKey(convo);
 
-        if (aes) {
-          finalContent = await decrypt(aes, parsed);
-        }
+        const aes = await getAesKey(convo);
+        if (aes) finalContent = await decrypt(aes, parsed);
       }
-    } catch (e) {}
+    }
+  }
+} catch {}
+
 
     // Ignore echo of my own sent message
     if (msg.sender._id === user._id) {
@@ -340,43 +339,34 @@ if (
 
   api.get(`/messages/${selectedConvo._id}`)
     .then(async (res) => {
-      const list = await Promise.all(
-        res.data.map(async (m) => {
-          let content = m.content;
+  const aes = await getAesKey(selectedConvo);
 
-          try {
-            // Trim to avoid newline/spaces
-            const trimmed = (typeof content === "string" ? content.trim() : content);
+  const list = await Promise.all(
+    res.data.map(async (m) => {
+      let content = m.content;
 
-            // Only parse JSON-like data
-            if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-              const parsed = JSON.parse(trimmed);
+      try {
+        const trimmed = typeof content === "string" ? content.trim() : "";
 
-              // Check if it's encrypted structure
-              if (parsed.iv && parsed.data) {
-                const aes = await getAesKey(selectedConvo);
-
-                if (aes) {
-                  content = await decrypt(aes, parsed);
-                }
-              }
-            }
-          } catch (e) {
-            // Ignore parse errors, keep raw content
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+          const parsed = JSON.parse(trimmed);
+          if (parsed.iv && parsed.data && aes) {
+            content = await decrypt(aes, parsed);
           }
+        }
+      } catch {}
 
-          return { ...m, content };
-        })
-      );
-
-      setMessages(list);
-      socket.current.emit("markSeen", {
-  conversationId: selectedConvo._id,
-  userId: user._id
-});
-
-
+      return { ...m, content };
     })
+  );
+
+  setMessages(list);
+
+  socket.current.emit("markSeen", {
+    conversationId: selectedConvo._id,
+    userId: user._id
+  });
+})
     .catch(() => {});
 }, [selectedConvo]);
 
@@ -649,16 +639,17 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
   const endRef = useRef(null);
 
   // ⭐ FIX: Name not showing on mobile (supports both user shapes)
-  const otherParticipant = conversation.participants.find(
-    (p) => p.user?._id !== user._id
-  );
+  const otherRaw = conversation.participants.find(
+  (p) => (p.user?._id || p.user) !== user._id
+)?.user;
 
-  const other =
-    typeof otherParticipant?.user === "string"
-      ? conversation.participants.find((p) => p.user !== user._id)?.user
-      : otherParticipant?.user;
+const other =
+  typeof otherRaw === "string"
+    ? conversation.participants.find((p) => p.user?._id === otherRaw)?.user
+    : otherRaw;
 
-  const name = other?.username || "User";
+const name = other?.username || "User";
+
 
   const handleSubmit = (e) => {
     e.preventDefault();
