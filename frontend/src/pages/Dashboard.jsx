@@ -11,13 +11,11 @@ import EmojiPicker from "emoji-picker-react";
 const API_URL = import.meta.env.VITE_AXIOS_URL;
 const SOCKET_URL = import.meta.env.VITE_API_URL;
 
-
 const api = axios.create({
   baseURL: API_URL,
 });
 
 let globalSocket = null;
-
 
 const UserContext = React.createContext();
 const useUser = () => useContext(UserContext);
@@ -49,7 +47,7 @@ function Dashboard() {
   useEffect(() => {
     if (!isMobile) {
       setMobileView("list");
-      setSelectedConvo(selectedConvo); 
+      // ❌ removed setSelectedConvo(selectedConvo); it caused unnecessary re-renders
     }
   }, [isMobile]);
 
@@ -153,18 +151,36 @@ function Dashboard() {
     return utf8Decoder.decode(plain);
   }
 
+  // ✅ FIXED: robust other-user resolution for AES key derivation
   async function getAesKey(convo) {
-    if (!convo) return null;
+    if (!convo || !user) return null;
     if (aesKeyCache.current[convo._id]) return aesKeyCache.current[convo._id];
 
-    const other = convo.participants.find((p) => p.user._id !== user._id)?.user;
-    if (!other) return null;
+    // Find other participant id safely (handles both string and object)
+    const otherParticipant = convo.participants.find((p) => {
+      const uid =
+        typeof p.user === "string" ? p.user : p.user?._id;
+      return uid && uid !== user._id;
+    });
 
-    let pubJwk = publicKeyCache.current[other._id];
+    if (!otherParticipant) return null;
+
+    const otherUser =
+      typeof otherParticipant.user === "string"
+        ? convo.participants.find(
+            (p) => p.user?._id === otherParticipant.user
+          )?.user
+        : otherParticipant.user;
+
+    if (!otherUser || !otherUser._id) return null;
+
+    const otherId = otherUser._id;
+
+    let pubJwk = publicKeyCache.current[otherId];
     if (!pubJwk) {
-      const res = await api.get(`/users/${other._id}/public-key`);
+      const res = await api.get(`/users/${otherId}/public-key`);
       pubJwk = res.data.publicKey;
-      publicKeyCache.current[other._id] = pubJwk;
+      publicKeyCache.current[otherId] = pubJwk;
     }
 
     const pub = await importPublicJwk(pubJwk);
@@ -182,7 +198,8 @@ function Dashboard() {
 
     api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
 
-    api.get("/users/profile")
+    api
+      .get("/users/profile")
       .then(async (res) => {
         setUser(res.data);
 
@@ -192,7 +209,9 @@ function Dashboard() {
         privateKeyRef.current = privateKey;
         publicJwkRef.current = publicJwk;
 
-        await api.post("/users/public-key", { publicKey: publicJwk }).catch(() => {});
+        await api
+          .post("/users/public-key", { publicKey: publicJwk })
+          .catch(() => {});
       })
       .catch(() => {
         removeToken();
@@ -203,173 +222,156 @@ function Dashboard() {
   // ─────────────────────── SOCKET ───────────────────────
 
   useEffect(() => {
-  selectedConvoRef.current = selectedConvo;
-}, [selectedConvo]);
+    selectedConvoRef.current = selectedConvo;
+  }, [selectedConvo]);
 
-  // ✅ ADD THIS ENTIRE useEffect
+  // ✅ keep conversationsRef synced
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
 
-
   useEffect(() => {
-  if (!user) return;
+    if (!user) return;
 
-  // Use the single global socket
-  if (!globalSocket) {
-    globalSocket = io(SOCKET_URL, { query: { userId: user._id } });
-  }
+    // Use the single global socket
+    if (!globalSocket) {
+      globalSocket = io(SOCKET_URL, { query: { userId: user._id } });
+    }
 
-  socket.current = globalSocket;
+    socket.current = globalSocket;
 
-  // ---------------------------
-  // HANDLE INCOMING MESSAGE
-  // ---------------------------
-  const handleIncomingMessage = async (msg) => {
-    let finalContent = msg.content;
+    // ---------------------------
+    // HANDLE INCOMING MESSAGE
+    // ---------------------------
+    const handleIncomingMessage = async (msg) => {
+      let finalContent = msg.content;
 
-    try {
-  if (typeof msg.content === "string") {
-    const trimmed = msg.content.trim();
+      try {
+        if (typeof msg.content === "string") {
+          const trimmed = msg.content.trim();
 
-    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-      const parsed = JSON.parse(trimmed);
+          if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            const parsed = JSON.parse(trimmed);
 
-      if (parsed.iv && parsed.data) {
-        const convo = conversationsRef.current.find(
-          (c) => c._id === msg.conversation
-        );
+            if (parsed.iv && parsed.data) {
+              const convo = conversationsRef.current.find(
+                (c) => c._id === msg.conversation
+              );
 
-        const aes = await getAesKey(convo);
-        if (aes) finalContent = await decrypt(aes, parsed);
+              const aes = await getAesKey(convo);
+              if (aes) finalContent = await decrypt(aes, parsed);
+            }
+          }
+        }
+      } catch {}
+
+      // Ignore echo of my own sent message
+      if (msg.sender._id === user._id) {
+        return;
       }
-    }
-  }
-} catch {}
 
+      const finalMsg = { ...msg, content: finalContent };
 
-    // Ignore echo of my own sent message
-    if (msg.sender._id === user._id) {
-      return;
-    }
+      // ⭐ Mark as delivered
+      finalMsg.status = "delivered";
 
-    const finalMsg = { ...msg, content: finalContent };
-
-    // ⭐ Mark as delivered
-    finalMsg.status = "delivered";
-
-    // ⭐ If user is actively viewing this conversation → mark seen immediately
-if (
-  selectedConvoRef.current &&
-  selectedConvoRef.current._id === msg.conversation
-) {
-  socket.current.emit("markSeen", {
-    conversationId: msg.conversation,
-    userId: user._id
-  });
-}
-
-
-    setMessages((prev) => {
+      // ⭐ If user is actively viewing this conversation → mark seen immediately
       if (
-        selectedConvoRef.current?._id === finalMsg.conversation ||
-        selectedConvo?._id === finalMsg.conversation
+        selectedConvoRef.current &&
+        selectedConvoRef.current._id === msg.conversation
       ) {
-        return [...prev, finalMsg];
+        socket.current.emit("markSeen", {
+          conversationId: msg.conversation,
+          userId: user._id,
+        });
       }
-      return prev;
+
+      setMessages((prev) => {
+        if (
+          selectedConvoRef.current?._id === finalMsg.conversation ||
+          selectedConvo?._id === finalMsg.conversation
+        ) {
+          return [...prev, finalMsg];
+        }
+        return prev;
+      });
+
+      updateConvoList(finalMsg);
+    };
+
+    // ---------------------------
+    // REGISTER SOCKET LISTENERS
+    // ---------------------------
+    socket.current.on("receiveMessage", handleIncomingMessage);
+
+    // ⭐ NEW → When backend tells us message was SEEN
+    socket.current.on("messageSeen", (msgId) => {
+      setMessages((prev) =>
+        prev.map((m) => (m._id === msgId ? { ...m, status: "seen" } : m))
+      );
     });
 
-    updateConvoList(finalMsg);
-  };
-
-  // ---------------------------
-  // REGISTER SOCKET LISTENERS
-  // ---------------------------
-  socket.current.on("receiveMessage", handleIncomingMessage);
-
-  // ⭐ NEW → When backend tells us message was SEEN
-  socket.current.on("messageSeen", (msgId) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m._id === msgId ? { ...m, status: "seen" } : m
-      )
-    );
-  });
-
-  return () => {
-    socket.current.off("receiveMessage", handleIncomingMessage);
-    socket.current.off("messageSeen");
-  };
-}, [user]);
-
-
-
+    return () => {
+      socket.current.off("receiveMessage", handleIncomingMessage);
+      socket.current.off("messageSeen");
+    };
+  }, [user]);
 
   // ─────────────────────── LOAD CONVERSATIONS ───────────────────────
 
   useEffect(() => {
     if (!user) return;
 
-    api.get("/conversations")
+    api
+      .get("/conversations")
       .then((res) => setConversations(res.data))
       .catch(() => {});
   }, [user]);
 
-//   useEffect(() => {
-//   if (!selectedConvo) return;
-
-//   // Rejoin room when component reloads
-//   socket.current?.emit("joinRoom", selectedConvo._id);
-
-// }, [selectedConvo]);
-
-
-
   // ─────────────────────── LOAD MESSAGES ───────────────────────
 
- useEffect(() => {
-  if (!selectedConvo) return;
+  useEffect(() => {
+    if (!selectedConvo) return;
 
-  setMessages([]);   // Clear old chat instantly when switching users
+    setMessages([]); // Clear old chat instantly when switching users
 
-  // Rejoin room when component reloads
+    // Rejoin room when component reloads
+    socket.current.emit("joinRoom", selectedConvo._id);
 
-  socket.current.emit("joinRoom", selectedConvo._id);
+    api
+      .get(`/messages/${selectedConvo._id}`)
+      .then(async (res) => {
+        const aes = await getAesKey(selectedConvo);
 
-  api.get(`/messages/${selectedConvo._id}`)
-    .then(async (res) => {
-  const aes = await getAesKey(selectedConvo);
+        const list = await Promise.all(
+          res.data.map(async (m) => {
+            let content = m.content;
 
-  const list = await Promise.all(
-    res.data.map(async (m) => {
-      let content = m.content;
+            try {
+              const trimmed =
+                typeof content === "string" ? content.trim() : "";
 
-      try {
-        const trimmed = typeof content === "string" ? content.trim() : "";
+              if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                const parsed = JSON.parse(trimmed);
+                if (parsed.iv && parsed.data && aes) {
+                  content = await decrypt(aes, parsed);
+                }
+              }
+            } catch {}
 
-        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-          const parsed = JSON.parse(trimmed);
-          if (parsed.iv && parsed.data && aes) {
-            content = await decrypt(aes, parsed);
-          }
-        }
-      } catch {}
+            return { ...m, content };
+          })
+        );
 
-      return { ...m, content };
-    })
-  );
+        setMessages(list);
 
-  setMessages(list);
-
-  socket.current.emit("markSeen", {
-    conversationId: selectedConvo._id,
-    userId: user._id
-  });
-})
-    .catch(() => {});
-}, [selectedConvo]);
-
+        socket.current.emit("markSeen", {
+          conversationId: selectedConvo._id,
+          userId: user._id,
+        });
+      })
+      .catch(() => {});
+  }, [selectedConvo]);
 
   // ─────────────────────── UPDATE CHAT LIST ───────────────────────
 
@@ -396,7 +398,8 @@ if (
   };
 
   const handleCreateConvo = (targetUser) => {
-    api.post("/conversations", { targetUserId: targetUser._id })
+    api
+      .post("/conversations", { targetUserId: targetUser._id })
       .then((res) => {
         const newConvo = res.data;
 
@@ -417,40 +420,43 @@ if (
   // ─────────────────────── SEND MESSAGE ───────────────────────
 
   const handleSendMessage = async (content) => {
-  if (!selectedConvo) return;
+    if (!selectedConvo) return;
 
-  let sendContent = content;
+    let sendContent = content;
 
-  // Encrypt before sending
-  const aes = await getAesKey(selectedConvo);
-  if (aes) {
-    const encrypted = await encrypt(aes, content);
-    sendContent = JSON.stringify(encrypted);
-  }
+    // Encrypt before sending
+    const aes = await getAesKey(selectedConvo);
+    if (aes) {
+      const encrypted = await encrypt(aes, content);
+      sendContent = JSON.stringify(encrypted);
+    }
 
-  // ⭐ Add the plaintext message instantly
-  const localMessage = {
-    _id: Date.now(),        // temporary ID
-    content,                // plaintext
-    sender: { _id: user._id },
-    conversation: selectedConvo._id,
-    createdAt: new Date().toISOString(),
-    status: "sent",
+    // ⭐ Add the plaintext message instantly
+    const localMessage = {
+      _id: Date.now(), // temporary ID
+      content, // plaintext
+      sender: { _id: user._id },
+      conversation: selectedConvo._id,
+      createdAt: new Date().toISOString(),
+      status: "sent",
+    };
+
+    setMessages((prev) => [...prev, localMessage]);
+
+    // Send encrypted to backend
+    socket.current.emit("sendMessage", {
+      content: sendContent,
+      conversationId: selectedConvo._id,
+      sender: user._id,
+    });
   };
 
-  setMessages((prev) => [...prev, localMessage]);
-
-  // Send encrypted to backend
-  socket.current.emit("sendMessage", {
-    content: sendContent,
-    conversationId: selectedConvo._id,
-    sender: user._id,
-  });
-};
   // ─────────────────────── LOADING STATE ───────────────────────
 
   if (!user) {
-    return <div className="h-full flex items-center justify-center">Loading...</div>;
+    return (
+      <div className="h-full flex items-center justify-center">Loading...</div>
+    );
   }
 
   // ─────────────────────── UI RENDER ───────────────────────
@@ -458,7 +464,6 @@ if (
   return (
     <UserContext.Provider value={user}>
       <div className="flex h-full">
-
         {/* ⭐ MOBILE LIST ONLY */}
         {isMobile && mobileView === "list" && (
           <ConversationList
@@ -512,7 +517,12 @@ if (
 // CONVERSATION LIST
 // ───────────────────────────────────────────────────────────
 
-function ConversationList({ conversations, onSelect, activeId, onCreateConvo }) {
+function ConversationList({
+  conversations,
+  onSelect,
+  activeId,
+  onCreateConvo,
+}) {
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
 
@@ -523,7 +533,8 @@ function ConversationList({ conversations, onSelect, activeId, onCreateConvo }) 
     }
 
     const delay = setTimeout(() => {
-      api.get(`/users?search=${search}`)
+      api
+        .get(`/users?search=${search}`)
         .then((res) => setSearchResults(res.data))
         .catch(() => {});
     }, 300);
@@ -548,7 +559,8 @@ function ConversationList({ conversations, onSelect, activeId, onCreateConvo }) 
 
             if (!phone) return setSearchResults([]);
 
-            api.get(`/users/phone-search?phone=${phone}`)
+            api
+              .get(`/users/phone-search?phone=${phone}`)
               .then((res) => setSearchResults([res.data]))
               .catch(() => setSearchResults([]));
           }}
@@ -576,7 +588,9 @@ function ConversationList({ conversations, onSelect, activeId, onCreateConvo }) 
                 </div>
 
                 <div className="grow ml-3">
-                  <h3 className="text-sm font-medium text-gray-900">{user.username}</h3>
+                  <h3 className="text-sm font-medium text-gray-900">
+                    {user.username}
+                  </h3>
                 </div>
               </motion.div>
             ))}
@@ -602,7 +616,20 @@ function ConversationItem({ convo, isActive, onClick }) {
   const user = useUser();
   if (!user) return null;
 
-  const other = convo.participants.find((p) => p.user._id !== user._id)?.user;
+  // ✅ FIX: robust other-user resolution like ChatWindow
+  const otherParticipant = convo.participants.find((p) => {
+    const uid =
+      typeof p.user === "string" ? p.user : p.user?._id;
+    return uid && uid !== user._id;
+  });
+
+  const other =
+    typeof otherParticipant?.user === "string"
+      ? convo.participants.find(
+          (p) => p.user?._id === otherParticipant.user
+        )?.user
+      : otherParticipant?.user;
+
   const name = other?.username || "Chat";
 
   return (
@@ -622,7 +649,9 @@ function ConversationItem({ convo, isActive, onClick }) {
 
       <div className="grow ml-3 overflow-hidden">
         <h3 className="text-sm font-medium">{name}</h3>
-        <p className="text-sm text-gray-500 truncate">{convo.lastMessage || "..."}</p>
+        <p className="text-sm text-gray-500 truncate">
+          {convo.lastMessage || "..."}
+        </p>
       </div>
     </motion.div>
   );
@@ -640,16 +669,15 @@ function ChatWindow({ conversation, messages, onSendMessage, onBack }) {
 
   // ⭐ FIX: Name not showing on mobile (supports both user shapes)
   const otherRaw = conversation.participants.find(
-  (p) => (p.user?._id || p.user) !== user._id
-)?.user;
+    (p) => (p.user?._id || p.user) !== user._id
+  )?.user;
 
-const other =
-  typeof otherRaw === "string"
-    ? conversation.participants.find((p) => p.user?._id === otherRaw)?.user
-    : otherRaw;
+  const other =
+    typeof otherRaw === "string"
+      ? conversation.participants.find((p) => p.user?._id === otherRaw)?.user
+      : otherRaw;
 
-const name = other?.username || "User";
-
+  const name = other?.username || "User";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -664,10 +692,8 @@ const name = other?.username || "User";
 
   return (
     <div className="grow flex flex-col bg-gray-50 h-screen md:h-auto">
-
       {/* ⭐ FIXED MOBILE HEADER WITH NAME */}
       <div className="p-4 bg-white shadow flex items-center space-x-4 sticky top-0 z-20">
-
         {onBack && (
           <button
             onClick={onBack}
@@ -698,7 +724,6 @@ const name = other?.username || "User";
         className="p-4 bg-white border-t border-gray-200 relative"
       >
         <div className="flex items-center space-x-3 w-full">
-
           <button
             type="button"
             onClick={() => setShowEmoji((p) => !p)}
@@ -710,7 +735,9 @@ const name = other?.username || "User";
           {showEmoji && (
             <div className="absolute bottom-16 left-4 z-50">
               <EmojiPicker
-                onEmojiClick={(emoji) => setContent((prev) => prev + emoji.emoji)}
+                onEmojiClick={(emoji) =>
+                  setContent((prev) => prev + emoji.emoji)
+                }
               />
             </div>
           )}
@@ -735,8 +762,6 @@ const name = other?.username || "User";
   );
 }
 
-
-
 // ───────────────────────────────────────────────────────────
 // MESSAGE BUBBLE
 // ───────────────────────────────────────────────────────────
@@ -749,7 +774,7 @@ function Message({ message }) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.20 }}
+      transition={{ duration: 0.2 }}
       className={`flex ${isMe ? "justify-end" : "justify-start"}`}
     >
       <div
@@ -767,12 +792,12 @@ function Message({ message }) {
           })}
         </p>
         {isMe && (
-  <p className="text-xs mt-1 text-right">
-    {message.status === "sent" && "sent"}
-    {message.status === "delivered" && "delivered"}
-    {message.status === "seen" && "seen"}
-  </p>
-)}
+          <p className="text-xs mt-1 text-right">
+            {message.status === "sent" && "sent"}
+            {message.status === "delivered" && "delivered"}
+            {message.status === "seen" && "seen"}
+          </p>
+        )}
       </div>
     </motion.div>
   );
