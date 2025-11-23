@@ -2,12 +2,3 @@
 /* @custom-variant dark (&:where(.dark, .dark *)); */
 
 
-:root {
-  background-color: white;
-  color: black;
-}
-
-:root.dark {
-  background-color: #111827; /* gray-900 */
-  color: white;
-}
