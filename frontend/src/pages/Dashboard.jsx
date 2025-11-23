@@ -25,7 +25,7 @@ function Dashboard() {
   const [conversations, setConversations] = useState([]);
   const [selectedConvo, setSelectedConvo] = useState(null);
   const [messages, setMessages] = useState([]);
-  
+
   // State to track unread messages per conversation
   const [unreadCounts, setUnreadCounts] = useState({});
 
@@ -57,7 +57,6 @@ function Dashboard() {
   // ⭐ HANDLE HARDWARE/BROWSER BACK BUTTON
   useEffect(() => {
     const handlePopState = (event) => {
-      // If back button is pressed and we are on mobile in chat view
       if (isMobile && mobileView === "chat") {
         setMobileView("list");
         setSelectedConvo(null);
@@ -310,14 +309,6 @@ function Dashboard() {
       // If message is from others
       finalMsg.status = "delivered";
 
-      // ⭐ FEATURE: Unread Count Logic
-      if (selectedConvoRef.current?._id !== msg.conversation) {
-        setUnreadCounts((prev) => ({
-          ...prev,
-          [msg.conversation]: (prev[msg.conversation] || 0) + 1,
-        }));
-      }
-
       // If we are looking at this conversation, mark it seen immediately
       if (
         selectedConvoRef.current &&
@@ -339,26 +330,38 @@ function Dashboard() {
         return prev;
       });
 
-      // ⭐ FEATURE: Automatic Conversation Addition
-      // Check if we already have this conversation in our list
+      // ⭐ FEATURE: Check if conversation exists locally
       const convoExists = conversationsRef.current.find(
         (c) => c._id === msg.conversation
       );
 
       if (convoExists) {
-        // Update existing
+        // 1. Conversation exists -> Update list
         updateConvoList(finalMsg);
+
+        // 2. Update Unread Count (if not selected)
+        if (selectedConvoRef.current?._id !== msg.conversation) {
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [msg.conversation]: (prev[msg.conversation] || 0) + 1,
+          }));
+        }
       } else {
-        // ⭐ NEW: It's a new conversation (we are the recipient).
-        // Fetch updated conversation list to get the new one.
+        // 1. Conversation NEW -> Fetch updated list from API
         api
           .get("/conversations")
-          .then((res) => setConversations(res.data))
+          .then((res) => {
+            setConversations(res.data);
+            // ⭐ FIX: Explicitly set unread count to 1 for this new conversation
+            setUnreadCounts((prev) => ({
+              ...prev,
+              [msg.conversation]: 1,
+            }));
+          })
           .catch(() => {});
       }
     };
 
-    // Listeners
     socket.current.on("receiveMessage", handleIncomingMessage);
 
     socket.current.on("messageSeen", (msgId) => {
@@ -435,7 +438,7 @@ function Dashboard() {
 
   const handleSelectConvo = (convo) => {
     setSelectedConvo(convo);
-    
+
     // ⭐ Reset unread count when opening a conversation
     setUnreadCounts((prev) => ({
       ...prev,
@@ -453,10 +456,9 @@ function Dashboard() {
       .post("/conversations", { targetUserId: targetUser._id })
       .then((res) => {
         const newConvo = res.data;
+        // ⭐ FIX: Prevent Duplicate Addition locally
         if (!conversations.find((c) => c._id === newConvo._id)) {
           setConversations((prev) => [newConvo, ...prev]);
-          // ⭐ REMOVED: The socket emit that caused premature notification
-          // socket.current.emit("notifyNewConversation", ... );
         }
         setSelectedConvo(newConvo);
         setUnreadCounts((prev) => ({ ...prev, [newConvo._id]: 0 }));
@@ -584,14 +586,14 @@ function ConversationList({
       api
         .get(`/users/phone-search?phone=${search}`)
         .then((res) => {
-          if(res.data) {
-             setSearchResults([res.data]);
+          if (res.data) {
+            setSearchResults([res.data]);
           } else {
-             setSearchResults([]);
+            setSearchResults([]);
           }
         })
         .catch(() => {
-             setSearchResults([]);
+          setSearchResults([]);
         });
     }, 300);
     return () => clearTimeout(delay);
@@ -611,12 +613,7 @@ function ConversationList({
             Hello, {user?.username} 👋
           </h2>
         </div>
-        <button 
-          onClick={() => { if(window.confirm("Logout?")) onLogout() }}
-          className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-full transition-colors"
-        >
-          Logout
-        </button>
+        
       </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
@@ -674,14 +671,16 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
     return uid && uid !== user._id;
   });
 
-  const other =
+  const otherUser =
     typeof otherParticipant?.user === "string"
       ? convo.participants.find(
           (p) => p.user?._id === otherParticipant.user
         )?.user
       : otherParticipant?.user;
 
-  const name = other?.username || "Unknown";
+  // ⭐ FIX: Handle Deleted Users Gracefully
+  const name = otherUser?.username || "Deleted User";
+  const initial = name.charAt(0).toUpperCase();
 
   return (
     <div
@@ -690,16 +689,26 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
         isActive ? "bg-indigo-50" : ""
       }`}
     >
-      <div className="shrink-0 w-10 h-10 bg-indigo-500 text-white rounded-full flex items-center justify-center font-bold">
-        {name.charAt(0).toUpperCase()}
+      <div
+        className={`shrink-0 w-10 h-10 text-white rounded-full flex items-center justify-center font-bold ${
+          otherUser ? "bg-indigo-500" : "bg-gray-400"
+        }`}
+      >
+        {initial}
       </div>
       <div className="grow ml-3 overflow-hidden">
-        <h3 className="text-sm font-medium text-gray-900">{name}</h3>
+        <h3
+          className={`text-sm font-medium ${
+            otherUser ? "text-gray-900" : "text-gray-500 italic"
+          }`}
+        >
+          {name}
+        </h3>
         <p className="text-xs text-gray-500 truncate">
           {convo.lastMessage || "Start chatting..."}
         </p>
       </div>
-      
+
       {unreadCount > 0 && (
         <div className="ml-2 shrink-0 bg-red-500 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full">
           {unreadCount > 9 ? "9+" : unreadCount}
@@ -737,7 +746,8 @@ function ChatWindow({
         )?.user
       : otherParticipant?.user;
 
-  const name = otherUser?.username || "Chat";
+  // ⭐ FIX: Handle Deleted Users Gracefully
+  const name = otherUser?.username || "Deleted User";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -765,7 +775,11 @@ function ChatWindow({
             ←
           </button>
         )}
-        <div className="w-9 h-9 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold shrink-0">
+        <div
+          className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold shrink-0 ${
+            otherUser ? "bg-indigo-600" : "bg-gray-400"
+          }`}
+        >
           {name.charAt(0).toUpperCase()}
         </div>
         <h2 className="ml-3 text-lg font-semibold text-gray-800 truncate">
@@ -804,15 +818,19 @@ function ChatWindow({
             type="text"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Type a message..."
+            placeholder={
+              otherUser ? "Type a message..." : "User deleted"
+            }
+            disabled={!otherUser}
             className="flex-1 px-4 py-2 border border-gray-300 rounded-full 
               focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500
-              text-gray-900 bg-white"
+              text-gray-900 bg-white disabled:bg-gray-100 disabled:text-gray-500"
           />
 
           <button
             type="submit"
-            className="px-4 py-2 bg-indigo-600 text-white rounded-full font-medium hover:bg-indigo-700 transition"
+            disabled={!otherUser}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-full font-medium hover:bg-indigo-700 transition disabled:bg-gray-400"
           >
             Send
           </button>
