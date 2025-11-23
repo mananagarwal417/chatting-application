@@ -339,12 +339,36 @@ function Dashboard() {
         return prev;
       });
 
-      updateConvoList(finalMsg);
+      // ⭐ FEATURE: Automatic Conversation Addition
+      // Check if we already have this conversation in our list
+      const convoExists = conversationsRef.current.find(
+        (c) => c._id === msg.conversation
+      );
+
+      if (convoExists) {
+        // Update existing
+        updateConvoList(finalMsg);
+      } else {
+        // ⭐ NEW: It's a new conversation (we are the recipient).
+        // Fetch updated conversation list to get the new one.
+        api
+          .get("/conversations")
+          .then((res) => setConversations(res.data))
+          .catch(() => {});
+      }
     };
 
+    // Listeners
     socket.current.on("receiveMessage", handleIncomingMessage);
 
-    // ⭐ STATUS UPDATE: Seen
+    // ⭐ NEW LISTENER: If backend emits "newConversation" event
+    socket.current.on("newConversation", (newConvo) => {
+      setConversations((prev) => {
+        if (prev.find((c) => c._id === newConvo._id)) return prev;
+        return [newConvo, ...prev];
+      });
+    });
+
     socket.current.on("messageSeen", (msgId) => {
       setMessages((prev) =>
         prev.map((m) => (m._id === msgId ? { ...m, status: "seen" } : m))
@@ -354,6 +378,7 @@ function Dashboard() {
     return () => {
       socket.current.off("receiveMessage", handleIncomingMessage);
       socket.current.off("messageSeen");
+      socket.current.off("newConversation");
     };
   }, [user]);
 
@@ -428,7 +453,6 @@ function Dashboard() {
 
     if (isMobile) {
       setMobileView("chat");
-      // ⭐ PUSH HISTORY STATE so back button works
       window.history.pushState({ chatOpen: true }, "");
     }
   };
@@ -446,8 +470,6 @@ function Dashboard() {
           });
         }
         setSelectedConvo(newConvo);
-        
-        // ⭐ Reset count on create/select
         setUnreadCounts((prev) => ({ ...prev, [newConvo._id]: 0 }));
 
         if (isMobile) {
@@ -468,9 +490,8 @@ function Dashboard() {
       sendContent = JSON.stringify(encrypted);
     }
 
-    // Add local message with Temp ID
     const localMessage = {
-      _id: Date.now(), // Temp ID (number)
+      _id: Date.now(),
       content,
       sender: { _id: user._id },
       conversation: selectedConvo._id,
@@ -504,7 +525,7 @@ function Dashboard() {
             activeId={selectedConvo?._id}
             onCreateConvo={handleCreateConvo}
             onLogout={handleLogout}
-            unreadCounts={unreadCounts} // Pass counts
+            unreadCounts={unreadCounts}
           />
         )}
 
@@ -515,7 +536,6 @@ function Dashboard() {
             messages={messages}
             onSendMessage={handleSendMessage}
             onBack={() => {
-              // ⭐ Trigger Browser Back to keep history clean
               window.history.back();
             }}
             isMobile={true}
@@ -531,7 +551,7 @@ function Dashboard() {
               activeId={selectedConvo?._id}
               onCreateConvo={handleCreateConvo}
               onLogout={handleLogout}
-              unreadCounts={unreadCounts} // Pass counts
+              unreadCounts={unreadCounts}
             />
             {selectedConvo ? (
               <ChatWindow
@@ -551,7 +571,7 @@ function Dashboard() {
 }
 
 // ───────────────────────────────────────────────────────────
-// CONVERSATION LIST (UPDATED SEARCH & HEADER)
+// CONVERSATION LIST
 // ───────────────────────────────────────────────────────────
 
 function ConversationList({
@@ -560,7 +580,7 @@ function ConversationList({
   activeId,
   onCreateConvo,
   onLogout,
-  unreadCounts, // Receive counts
+  unreadCounts,
 }) {
   const user = useUser();
   const [search, setSearch] = useState("");
@@ -572,11 +592,9 @@ function ConversationList({
       return;
     }
     const delay = setTimeout(() => {
-      // ⭐ CHANGED: Search by phone now
       api
         .get(`/users/phone-search?phone=${search}`)
         .then((res) => {
-          // Phone search usually returns a single object, so wrap in array
           if(res.data) {
              setSearchResults([res.data]);
           } else {
@@ -598,20 +616,23 @@ function ConversationList({
 
   return (
     <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-gray-200 flex flex-col h-full">
-      {/* ⭐ FIXED HEADER: Shows "Hello, [Name]" */}
       <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-white shadow-sm z-10">
         <div>
           <h2 className="text-xl font-bold text-gray-800">
             Hello, {user?.username} 👋
           </h2>
         </div>
-        
+        <button 
+          onClick={() => { if(window.confirm("Logout?")) onLogout() }}
+          className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-full transition-colors"
+        >
+          Logout
+        </button>
       </div>
 
       <div className="p-4 border-b border-gray-200 shrink-0">
         <input
           type="text"
-          // ⭐ CHANGED Placeholder
           placeholder="Enter phone number..."
           onChange={(e) => setSearch(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -647,7 +668,7 @@ function ConversationList({
             convo={convo}
             isActive={convo._id === activeId}
             onClick={() => onSelect(convo)}
-            unreadCount={unreadCounts[convo._id] || 0} // Pass specific count
+            unreadCount={unreadCounts[convo._id] || 0}
           />
         ))}
       </div>
@@ -659,7 +680,6 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
   const user = useUser();
   if (!user) return null;
 
-  // Robust participant check
   const otherParticipant = convo.participants.find((p) => {
     const uid = typeof p.user === "string" ? p.user : p.user?._id;
     return uid && uid !== user._id;
@@ -691,7 +711,6 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
         </p>
       </div>
       
-      {/* ⭐ BADGE: Show unread count if > 0 */}
       {unreadCount > 0 && (
         <div className="ml-2 shrink-0 bg-red-500 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full">
           {unreadCount > 9 ? "9+" : unreadCount}
@@ -717,7 +736,6 @@ function ChatWindow({
   const [showEmoji, setShowEmoji] = useState(false);
   const endRef = useRef(null);
 
-  // ⭐ FIXED NAME DISPLAY
   const otherParticipant = conversation.participants.find((p) => {
     const uid = typeof p.user === "string" ? p.user : p.user?._id;
     return uid && uid !== user._id;
@@ -749,7 +767,6 @@ function ChatWindow({
         isMobile ? "fixed inset-0 z-50 h-dvh" : "grow h-full"
       }`}
     >
-      {/* Header */}
       <div className="p-3 bg-white shadow-sm flex items-center shrink-0 border-b border-gray-200">
         {onBack && (
           <button
@@ -767,7 +784,6 @@ function ChatWindow({
         </h2>
       </div>
 
-      {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, index) => (
           <Message key={msg._id || index} message={msg} />
@@ -775,7 +791,6 @@ function ChatWindow({
         <div ref={endRef} />
       </div>
 
-      {/* Input Area */}
       <div className="shrink-0 p-3 bg-white border-t border-gray-200 relative">
         <form onSubmit={handleSubmit} className="flex items-center space-x-2">
           <button
@@ -817,10 +832,6 @@ function ChatWindow({
     </div>
   );
 }
-
-// ───────────────────────────────────────────────────────────
-// MESSAGE BUBBLE
-// ───────────────────────────────────────────────────────────
 
 function Message({ message }) {
   const user = useUser();
