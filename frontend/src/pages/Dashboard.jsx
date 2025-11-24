@@ -309,6 +309,14 @@ function Dashboard() {
       // If message is from others
       finalMsg.status = "delivered";
 
+      // ⭐ FEATURE: Unread Count Logic
+      if (selectedConvoRef.current?._id !== msg.conversation) {
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [msg.conversation]: (prev[msg.conversation] || 0) + 1,
+        }));
+      }
+
       // If we are looking at this conversation, mark it seen immediately
       if (
         selectedConvoRef.current &&
@@ -330,29 +338,21 @@ function Dashboard() {
         return prev;
       });
 
-      // ⭐ FEATURE: Check if conversation exists locally
+      // ⭐ FEATURE: Automatic Conversation Addition
       const convoExists = conversationsRef.current.find(
         (c) => c._id === msg.conversation
       );
 
       if (convoExists) {
-        // 1. Conversation exists -> Update list
+        // Update existing
         updateConvoList(finalMsg);
-
-        // 2. Update Unread Count (if not selected)
-        if (selectedConvoRef.current?._id !== msg.conversation) {
-          setUnreadCounts((prev) => ({
-            ...prev,
-            [msg.conversation]: (prev[msg.conversation] || 0) + 1,
-          }));
-        }
       } else {
-        // 1. Conversation NEW -> Fetch updated list from API
+        // NEW: It's a new conversation. Fetch updated list.
         api
           .get("/conversations")
           .then((res) => {
             setConversations(res.data);
-            // ⭐ FIX: Explicitly set unread count to 1 for this new conversation
+            // ⭐ FIX: Set unread count to 1 for this new conversation
             setUnreadCounts((prev) => ({
               ...prev,
               [msg.conversation]: 1,
@@ -376,13 +376,25 @@ function Dashboard() {
     };
   }, [user]);
 
-  // ─────────────────────── LOAD CONVERSATIONS ───────────────────────
+  // ─────────────────────── LOAD CONVERSATIONS (AND INIT COUNTS) ───────────────────────
 
   useEffect(() => {
     if (!user) return;
     api
       .get("/conversations")
-      .then((res) => setConversations(res.data))
+      .then((res) => {
+        setConversations(res.data);
+
+        // ⭐ CRITICAL FIX: Initialize unread counts from backend data
+        const initialCounts = {};
+        res.data.forEach((c) => {
+          // Assumes backend sends 'unreadCount'. If not, it defaults to 0.
+          if (c.unreadCount) {
+            initialCounts[c._id] = c.unreadCount;
+          }
+        });
+        setUnreadCounts(initialCounts);
+      })
       .catch(() => {});
   }, [user]);
 
@@ -456,7 +468,7 @@ function Dashboard() {
       .post("/conversations", { targetUserId: targetUser._id })
       .then((res) => {
         const newConvo = res.data;
-        // ⭐ FIX: Prevent Duplicate Addition locally
+        // Prevent duplicate addition
         if (!conversations.find((c) => c._id === newConvo._id)) {
           setConversations((prev) => [newConvo, ...prev]);
         }
@@ -678,8 +690,9 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
         )?.user
       : otherParticipant?.user;
 
-  // ⭐ FIX: Handle Deleted Users Gracefully
-  const name = otherUser?.username || "Deleted User";
+  // ⭐ FIX: Handle DELETED USER properly
+  const isDeleted = !otherUser;
+  const name = isDeleted ? "Deleted User" : otherUser.username;
   const initial = name.charAt(0).toUpperCase();
 
   return (
@@ -691,7 +704,7 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
     >
       <div
         className={`shrink-0 w-10 h-10 text-white rounded-full flex items-center justify-center font-bold ${
-          otherUser ? "bg-indigo-500" : "bg-gray-400"
+          isDeleted ? "bg-gray-400" : "bg-indigo-500"
         }`}
       >
         {initial}
@@ -699,7 +712,7 @@ function ConversationItem({ convo, isActive, onClick, unreadCount }) {
       <div className="grow ml-3 overflow-hidden">
         <h3
           className={`text-sm font-medium ${
-            otherUser ? "text-gray-900" : "text-gray-500 italic"
+            isDeleted ? "text-gray-500 italic" : "text-gray-900"
           }`}
         >
           {name}
@@ -746,8 +759,9 @@ function ChatWindow({
         )?.user
       : otherParticipant?.user;
 
-  // ⭐ FIX: Handle Deleted Users Gracefully
-  const name = otherUser?.username || "Deleted User";
+  // ⭐ FIX: Handle Deleted User in Chat Header
+  const isDeleted = !otherUser;
+  const name = isDeleted ? "Deleted User" : otherUser.username;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -766,6 +780,7 @@ function ChatWindow({
         isMobile ? "fixed inset-0 z-50 h-dvh" : "grow h-full"
       }`}
     >
+      {/* Chat Header */}
       <div className="p-3 bg-white shadow-sm flex items-center shrink-0 border-b border-gray-200">
         {onBack && (
           <button
@@ -777,7 +792,7 @@ function ChatWindow({
         )}
         <div
           className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold shrink-0 ${
-            otherUser ? "bg-indigo-600" : "bg-gray-400"
+            isDeleted ? "bg-gray-400" : "bg-indigo-600"
           }`}
         >
           {name.charAt(0).toUpperCase()}
@@ -787,6 +802,7 @@ function ChatWindow({
         </h2>
       </div>
 
+      {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, index) => (
           <Message key={msg._id || index} message={msg} />
@@ -794,17 +810,23 @@ function ChatWindow({
         <div ref={endRef} />
       </div>
 
+      {/* Input Area */}
       <div className="shrink-0 p-3 bg-white border-t border-gray-200 relative">
         <form onSubmit={handleSubmit} className="flex items-center space-x-2">
           <button
             type="button"
             onClick={() => setShowEmoji(!showEmoji)}
-            className="p-2 text-gray-500 hover:text-indigo-600"
+            disabled={isDeleted}
+            className={`p-2 ${
+              isDeleted
+                ? "text-gray-300 cursor-not-allowed"
+                : "text-gray-500 hover:text-indigo-600"
+            }`}
           >
             🙂
           </button>
 
-          {showEmoji && (
+          {showEmoji && !isDeleted && (
             <div className="absolute bottom-16 left-2 z-50 shadow-xl">
               <EmojiPicker
                 onEmojiClick={(emoji) =>
@@ -818,10 +840,8 @@ function ChatWindow({
             type="text"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder={
-              otherUser ? "Type a message..." : "User deleted"
-            }
-            disabled={!otherUser}
+            placeholder={isDeleted ? "User has been deleted" : "Type a message..."}
+            disabled={isDeleted}
             className="flex-1 px-4 py-2 border border-gray-300 rounded-full 
               focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500
               text-gray-900 bg-white disabled:bg-gray-100 disabled:text-gray-500"
@@ -829,8 +849,12 @@ function ChatWindow({
 
           <button
             type="submit"
-            disabled={!otherUser}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-full font-medium hover:bg-indigo-700 transition disabled:bg-gray-400"
+            disabled={isDeleted}
+            className={`px-4 py-2 rounded-full font-medium transition ${
+              isDeleted
+                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                : "bg-indigo-600 text-white hover:bg-indigo-700"
+            }`}
           >
             Send
           </button>
